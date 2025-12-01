@@ -22,4 +22,4 @@ is set up. Use explicit imports: `from src import data` or `from src.data import
 # and include this package in the code package for remote execution
 METAFLOW_PACKAGE_POLICY = 'include'
 
-__all__ = ["data", "model", "registry", "eval", "storage"]
+__all__ = ["data", "model", "registry", "eval", "storage", "cards"]
