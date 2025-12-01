@@ -182,15 +182,17 @@ class TrainDetectorFlow(ProjectFlow):
 
     @step
     def register(self):
-        """Register trained model as candidate."""
+        """Register trained model as candidate and log predictions."""
         from src import registry
+        from src.predictions import PredictionRecord, PredictionStore
         from metaflow import current
+        from datetime import datetime, timezone
 
         annotations = {
             "algorithm": self.trained_model.algorithm,
             **self.trained_model.hyperparameters,
             "n_features": self.feature_set.n_features,
-            "feature_names": ",".join(self.feature_set.feature_names),
+            "feature_names": ",".join(self.feature_set.feature_names[:20]),  # Limit to avoid overflow
             "training_samples": self.feature_set.n_samples,
             "anomalies_detected": self.prediction.n_anomalies,
             "anomaly_rate": float(self.prediction.anomaly_rate),
@@ -212,6 +214,30 @@ class TrainDetectorFlow(ProjectFlow):
         print(f"  Algorithm: {self.trained_model.algorithm}")
         print(f"  Data: {self.data_source}")
         print(f"  Run ID: {current.run_id}")
+
+        # Log predictions for outcome validation
+        prediction_timestamp = datetime.now(timezone.utc).isoformat()
+        model_version = f"{current.flow_name}/{current.run_id}"
+
+        predictions = []
+        for i, (score, label) in enumerate(zip(self.prediction.anomaly_scores, self.prediction.predictions)):
+            coin_info = self.feature_set.coin_info[i]
+            predictions.append(PredictionRecord(
+                coin_id=coin_info.get('coin_id', f'unknown_{i}'),
+                symbol=coin_info.get('symbol', 'UNK'),
+                prediction_timestamp=prediction_timestamp,
+                current_price=float(coin_info.get('current_price', 0)),
+                anomaly_score=float(score),
+                is_anomaly=(label == -1),  # -1 = anomaly in isolation forest
+                model_version=model_version,
+                flow_run_id=current.run_id,
+            ))
+
+        # Store predictions
+        store = PredictionStore(self.prj.project, self.prj.branch)
+        pred_path = store.log_predictions(predictions, current.flow_name, current.run_id)
+        print(f"\nLogged {len(predictions)} predictions for outcome validation")
+        print(f"  Path: {pred_path}")
 
         self.next(self.end)
 
