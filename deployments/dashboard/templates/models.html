@@ -5,6 +5,12 @@
 {% block content %}
 <h1>Model Registry</h1>
 
+{% if error_message %}
+<div class="alert alert-warning">
+    {{ error_message }}
+</div>
+{% endif %}
+
 <!-- Champion Info -->
 <div class="card">
     <div class="card-header">

@@ -45,9 +45,10 @@ def format_version(version_str):
 
     Asset versions in obproject are typically task pathspecs:
     - Format: v{timestamp}_task_{FlowName}_{run_id}_{step}_{task_id}
-    - Example: v098235478858_task_TrainAnomalyFlow_185193_train_12345
+    - Example: v098235478858_task_TrainDetectorFlow_185193_train_12345
+    - Argo format: v{ts}_task_{FlowName}_argo_cryptoanomaly_prod_{wf}_{uuid}
 
-    We extract the flow name and run ID for display.
+    We extract meaningful identifiers for display.
     """
     if not version_str:
         return "-"
@@ -55,21 +56,41 @@ def format_version(version_str):
     # If it's a simple version like "v5" or "5", return as-is
     if len(v) < 20:
         return f"v{v}" if not v.startswith("v") else v
+
     # For task pathspec format: v{ts}_task_{Flow}_{run}_{step}_{task}
     if "_task_" in v:
         parts = v.split("_")
-        # Find the flow name (after "task")
         try:
             task_idx = parts.index("task")
             flow_name = parts[task_idx + 1] if len(parts) > task_idx + 1 else ""
             run_id = parts[task_idx + 2] if len(parts) > task_idx + 2 else ""
+
             # Clean up flow name (remove common suffixes for brevity)
-            short_flow = flow_name.replace("AnomalyFlow", "").replace("Flow", "")
+            short_flow = flow_name.replace("DetectorFlow", "").replace("AnomalyFlow", "").replace("MarketDataFlow", "Ingest").replace("DatasetFlow", "Dataset").replace("Flow", "")
             if not short_flow:
-                short_flow = flow_name[:8]
-            return f"{short_flow}/{run_id}"
+                short_flow = flow_name[:10]
+
+            # For Argo runs, extract a more useful identifier
+            if run_id == "argo":
+                # Argo format: argo_cryptoanomaly_prod_traindetectorflow_xyz123
+                # Find the UUID at the end (last part that looks like a hash)
+                remaining = "_".join(parts[task_idx + 3:])
+                # Try to find a short unique ID - look for UUID-like part or last segment
+                uuid_parts = [p for p in parts if len(p) >= 8 and "-" in p]
+                if uuid_parts:
+                    # Use first 8 chars of UUID
+                    return f"{short_flow}/{uuid_parts[0][:8]}"
+                # Fallback: use timestamp from version
+                ts = parts[0][1:] if parts[0].startswith("v") else parts[0]
+                if len(ts) >= 12:
+                    # Convert epoch-like timestamp to readable format
+                    return f"{short_flow}/argo-{ts[-6:]}"
+                return f"{short_flow}/argo"
+            else:
+                return f"{short_flow}/{run_id}"
         except (ValueError, IndexError):
             pass
+
     # Fallback for other formats
     if "_" in v:
         parts = v.split("_")
@@ -77,7 +98,7 @@ def format_version(version_str):
             flow_name = parts[2] if len(parts) > 2 else ""
             run_id = parts[3] if len(parts) > 3 else ""
             return f"{flow_name[:12]}.../{run_id}"
-    return v[:12] + "..."
+    return v[:16] + "..."
 
 
 def format_version_tooltip(version_str):
@@ -85,9 +106,27 @@ def format_version_tooltip(version_str):
     return str(version_str) if version_str else ""
 
 
+def format_timestamp(ts_str):
+    """Format ISO timestamp to a human-readable short form."""
+    if not ts_str:
+        return "-"
+    ts = str(ts_str)
+    # Handle ISO format: 2025-12-01T05:41:00.065898+00:00
+    if "T" in ts:
+        # Extract date and time parts
+        date_part = ts.split("T")[0]
+        time_part = ts.split("T")[1].split(".")[0] if "." in ts else ts.split("T")[1][:8]
+        # Remove timezone if present
+        if "+" in time_part:
+            time_part = time_part.split("+")[0]
+        return f"{date_part} {time_part}"
+    return ts[:19] if len(ts) > 19 else ts
+
+
 # Register template filters
 templates.env.filters["format_version"] = format_version
 templates.env.filters["format_version_tooltip"] = format_version_tooltip
+templates.env.filters["format_timestamp"] = format_timestamp
 
 # Initialize asset client
 PROJECT = os.environ.get("OB_PROJECT", "crypto_anomaly")
@@ -386,21 +425,220 @@ async def model_registry(request: Request):
     branch = get_branch_from_request(request)
     asset = get_asset_client(branch)
 
-    versions = get_model_versions(asset, limit=20)
+    # Get versions with error handling
+    versions = []
+    error_message = None
+    try:
+        versions = get_model_versions(asset, limit=20)
+    except Exception as e:
+        error_message = f"Failed to load model versions: {str(e)}"
+        print(f"[ERROR] {error_message}")
 
     # Get champion version using tag-based lookup
     champion_version = None
-    champion = find_champion_model(asset)
-    if champion:
-        champion_version = champion["version"]
+    try:
+        champion = find_champion_model(asset)
+        if champion:
+            champion_version = champion["version"]
+    except Exception as e:
+        print(f"[ERROR] Failed to find champion: {e}")
 
     return templates.TemplateResponse("models.html", get_template_context(
         request, branch,
         versions=versions,
         champion_version=champion_version,
+        error_message=error_message,
     ))
 
 
+
+
+# =============================================================================
+# Card Embedding Endpoints
+# =============================================================================
+
+# Flow name mapping for card lookups
+FLOW_NAME_MAP = {
+    "train": "TrainDetectorFlow",
+    "evaluate": "EvaluateDetectorFlow",
+    "promote": "PromoteDetectorFlow",
+    "ingest": "IngestMarketDataFlow",
+    "build_dataset": "BuildDatasetFlow",
+}
+
+
+def get_card_html(flow_name: str, run_id: str = "latest", step_name: str = None, card_index: int = 0) -> Optional[str]:
+    """
+    Fetch card HTML for a specific flow run using Metaflow Client API.
+
+    Args:
+        flow_name: Metaflow flow class name (e.g., 'TrainDetectorFlow')
+        run_id: Run ID or 'latest' for most recent successful run
+        step_name: Specific step to get card from (optional)
+        card_index: Which card to get if multiple exist (default 0)
+
+    Returns:
+        HTML string of the card, or None if not found
+    """
+    try:
+        from metaflow import Flow
+        from metaflow.cards import get_cards
+
+        flow = Flow(flow_name)
+
+        # Find the run
+        if run_id == "latest":
+            run = flow.latest_successful_run
+            if run is None:
+                return None
+        else:
+            run = flow[run_id]
+
+        # If specific step requested, use that
+        if step_name:
+            try:
+                step = run[step_name]
+                for task in step:
+                    cards = get_cards(task)
+                    if cards and len(cards) > card_index:
+                        return cards[card_index].get()
+            except Exception:
+                pass
+            return None
+
+        # Find a step with a card (typically 'train', 'evaluate', 'register', etc.)
+        card_steps = ['train', 'evaluate', 'register', 'build_and_write']
+        for step in card_steps:
+            try:
+                step_obj = run[step]
+                for task in step_obj:
+                    cards = get_cards(task)
+                    if cards and len(cards) > card_index:
+                        return cards[card_index].get()
+            except Exception:
+                continue
+
+        return None
+    except Exception as e:
+        print(f"[DEBUG] get_card_html error: {e}")
+        return None
+
+
+def get_flow_cards_info(flow_name: str, run_id: str = "latest") -> list:
+    """
+    Get information about all cards in a flow run.
+
+    Returns list of dicts with step_name, card_index, card_type info.
+    """
+    try:
+        from metaflow import Flow
+        from metaflow.cards import get_cards
+
+        flow = Flow(flow_name)
+
+        if run_id == "latest":
+            run = flow.latest_successful_run
+            if run is None:
+                return []
+        else:
+            run = flow[run_id]
+
+        cards_info = []
+        for step in run.steps():
+            step_name = step.id
+            for task in step:
+                cards = get_cards(task)
+                for i, card in enumerate(cards):
+                    cards_info.append({
+                        "step_name": step_name,
+                        "card_index": i,
+                        "card_type": getattr(card, 'type', 'default'),
+                    })
+        return cards_info
+    except Exception as e:
+        print(f"[DEBUG] get_flow_cards_info error: {e}")
+        return []
+
+
+@app.get("/cards/{flow_alias}/latest", response_class=HTMLResponse)
+async def card_latest(flow_alias: str):
+    """
+    Get the card HTML for the latest run of a flow.
+
+    Args:
+        flow_alias: Short flow name (train, evaluate, promote, ingest, build_dataset)
+
+    Returns:
+        HTML content of the card, or 404 if not found
+    """
+    flow_name = FLOW_NAME_MAP.get(flow_alias)
+    if not flow_name:
+        raise HTTPException(status_code=404, detail=f"Unknown flow alias: {flow_alias}")
+
+    html = get_card_html(flow_name, "latest")
+    if html is None:
+        raise HTTPException(status_code=404, detail=f"No card found for {flow_name}")
+
+    return HTMLResponse(content=html)
+
+
+@app.get("/cards/{flow_alias}/{run_id}", response_class=HTMLResponse)
+async def card_by_run(flow_alias: str, run_id: str):
+    """
+    Get the card HTML for a specific run of a flow.
+
+    Args:
+        flow_alias: Short flow name (train, evaluate, promote, ingest, build_dataset)
+        run_id: Metaflow run ID
+
+    Returns:
+        HTML content of the card, or 404 if not found
+    """
+    flow_name = FLOW_NAME_MAP.get(flow_alias)
+    if not flow_name:
+        raise HTTPException(status_code=404, detail=f"Unknown flow alias: {flow_alias}")
+
+    html = get_card_html(flow_name, run_id)
+    if html is None:
+        raise HTTPException(status_code=404, detail=f"No card found for {flow_name}/{run_id}")
+
+    return HTMLResponse(content=html)
+
+
+@app.get("/cards", response_class=HTMLResponse)
+async def cards_page(request: Request):
+    """
+    Cards overview page - list available cards with iframe previews.
+    """
+    branch = get_branch_from_request(request)
+
+    # Get recent runs with cards for each flow
+    cards_info = []
+    for alias, flow_name in FLOW_NAME_MAP.items():
+        try:
+            from metaflow import Flow
+            flow = Flow(flow_name)
+            run = flow.latest_successful_run
+            if run:
+                # Get detailed card info for this run
+                step_cards = get_flow_cards_info(flow_name, "latest")
+                cards_info.append({
+                    "alias": alias,
+                    "flow_name": flow_name,
+                    "run_id": run.id,
+                    "created_at": run.created_at.isoformat() if run.created_at else None,
+                    "url": f"/cards/{alias}/latest",
+                    "step_cards": step_cards,  # List of {step_name, card_index}
+                    "card_count": len(step_cards),
+                })
+        except Exception as e:
+            print(f"[DEBUG] cards_page error for {flow_name}: {e}")
+            pass
+
+    return templates.TemplateResponse("cards.html", get_template_context(
+        request, branch,
+        cards=cards_info,
+    ))
 
 
 # =============================================================================

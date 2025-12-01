@@ -49,7 +49,7 @@
                 </td>
                 <td>
                     {% if asset.timestamp %}
-                        <span class="font-mono" style="font-size: 0.875rem;">{{ asset.timestamp }}</span>
+                        <span class="font-mono" style="font-size: 0.875rem;" title="{{ asset.timestamp }}">{{ asset.timestamp|format_timestamp }}</span>
                     {% else %}
                         <span class="text-muted">-</span>
                     {% endif %}
