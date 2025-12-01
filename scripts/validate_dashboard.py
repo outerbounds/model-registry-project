@@ -252,6 +252,7 @@ class DashboardValidator:
 
             checks = {}
             page_content = await self.page.content()
+            visible_text = await self.page.inner_text("body")
 
             # Check for model versions table
             tables = self.page.locator("table")
@@ -266,22 +267,50 @@ class DashboardValidator:
             print(f"  Status badges ({badge_count}): {'PASS' if checks['has_status_badges'] else 'FAIL'}")
 
             # Check for champion badge specifically
-            checks["has_champion_badge"] = "champion" in page_content.lower()
+            champion_badge = self.page.locator(".badge:has-text('champion')")
+            champion_count = await champion_badge.count()
+            checks["has_champion_badge"] = champion_count > 0
             print(f"  Champion badge: {'PASS' if checks['has_champion_badge'] else 'FAIL'}")
 
             # Check for algorithm info
-            checks["shows_algorithm"] = "isolation_forest" in page_content.lower()
+            checks["shows_algorithm"] = "isolation_forest" in page_content.lower() or "lof" in page_content.lower()
             print(f"  Algorithm shown: {'PASS' if checks['shows_algorithm'] else 'FAIL'}")
 
             # Check for anomaly rate
-            checks["shows_anomaly_rate"] = "anomaly" in page_content.lower() or "10%" in page_content
+            checks["shows_anomaly_rate"] = "anomaly" in visible_text.lower() or "%" in visible_text
             print(f"  Anomaly rate shown: {'PASS' if checks['shows_anomaly_rate'] else 'FAIL'}")
 
             # Check for compare functionality
-            compare_buttons = self.page.locator("button:has-text('Compare'), a:has-text('Compare')")
+            compare_buttons = self.page.locator("button:has-text('Compare'), select")
             compare_count = await compare_buttons.count()
-            checks["has_compare"] = compare_count > 0 or "compare" in page_content.lower()
+            checks["has_compare"] = compare_count > 0
             print(f"  Compare functionality: {'PASS' if checks['has_compare'] else 'FAIL'}")
+
+            # NEW: Check that model versions are from actual flows
+            # Look for flow/run format like "Train/185989" or "Promote/185991"
+            import re
+            flow_run_pattern = r"(Train|Evaluate|Promote)/\d+"
+            has_flow_versions = bool(re.search(flow_run_pattern, visible_text))
+            checks["has_flow_versions"] = has_flow_versions
+            print(f"  Flow versions shown: {'PASS' if checks['has_flow_versions'] else 'FAIL'}")
+
+            # NEW: Verify no "Internal Server Error" on page
+            checks["no_error"] = "internal server error" not in visible_text.lower()
+            print(f"  No errors: {'PASS' if checks['no_error'] else 'FAIL'}")
+
+            # NEW: Check version count is reasonable (at least 1)
+            version_badges = self.page.locator(".badge:has-text('version')")
+            version_badge_count = await version_badges.count()
+            if version_badge_count > 0:
+                # Extract count from badge text like "1 versions"
+                badge_text = await version_badges.first.inner_text()
+                import re
+                count_match = re.search(r"(\d+)\s*version", badge_text.lower())
+                version_count = int(count_match.group(1)) if count_match else 0
+            else:
+                version_count = 0
+            checks["has_model_versions"] = version_count >= 1
+            print(f"  Model versions ({version_count}): {'PASS' if checks['has_model_versions'] else 'FAIL'}")
 
             result.checks = checks
             result.passed = all(checks.values())
