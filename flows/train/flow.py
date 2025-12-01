@@ -59,7 +59,7 @@ class TrainDetectorFlow(ProjectFlow):
         print(f"Project: {self.prj.project}, Branch: {self.prj.branch}")
         print(f"\nModel config: {dict(self.model_config)}")
         print(f"Training config: {dict(self.training_config)}")
-        
+
         self.next(self.train)
 
     def _fetch_fresh_data(self):

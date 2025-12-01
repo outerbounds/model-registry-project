@@ -185,7 +185,7 @@ class BuildDatasetFlow(ProjectFlow):
             )
 
         if len(train_df) < 100:
-            print(f"\n⚠️  WARNING: Only {len(train_df)} training samples. Model quality may be poor.")
+            print(f"\n[WARN] Only {len(train_df)} training samples. Model quality may be poor.")
 
         # --- Write Training Dataset ---
         import pyarrow as pa
