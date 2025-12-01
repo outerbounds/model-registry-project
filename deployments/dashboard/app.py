@@ -93,11 +93,11 @@ templates.env.filters["format_version_tooltip"] = format_version_tooltip
 PROJECT = os.environ.get("OB_PROJECT", "crypto_anomaly")
 
 # Default branch for initial load (user can change in UI)
-DEFAULT_BRANCH = os.environ.get("OB_BRANCH", "main")
+DEFAULT_BRANCH = os.environ.get("OB_BRANCH", "prod")
 
 # Suggested branches shown in dropdown - users can type any branch
 # These are just hints, the UI allows entering any branch name
-SUGGESTED_BRANCHES = ["main", "prod"]
+SUGGESTED_BRANCHES = ["prod"]
 
 
 def get_asset_client(branch: str) -> Asset:
