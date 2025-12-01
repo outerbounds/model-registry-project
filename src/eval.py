@@ -56,7 +56,7 @@ class QualityGate:
     threshold: str
     actual: str
     status: GateStatus
-    description: str = ""  # Explains what this gate measures
+    description: str = ""
 
     @property
     def passed(self) -> bool:
