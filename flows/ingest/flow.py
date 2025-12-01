@@ -19,7 +19,7 @@ Data Flow:
 - EvaluateFlow: Uses eval holdout dataset or fetches fresh data
 """
 
-from metaflow import step, card, Parameter, schedule
+from metaflow import step, card, Config, schedule
 from obproject import ProjectFlow
 
 # Import src at module level so Metaflow detects METAFLOW_PACKAGE_POLICY
@@ -36,21 +36,22 @@ class IngestMarketDataFlow(ProjectFlow):
     points to it for downstream consumption.
     """
 
-    num_coins = Parameter(
-        "num_coins",
-        default=100,
-        help="Number of top coins to fetch (max 250)"
-    )
+    # Centralized config - num_coins comes from training_config.num_coins
+    training_config = Config("training_config", default="configs/training.json")
 
     @step
     def start(self):
         """Fetch live market data from CoinGecko."""
         from src import data
 
-        print(f"Project: {self.prj.project}, Branch: {self.prj.branch}")
-        print(f"Fetching live data for top {self.num_coins} cryptocurrencies...")
+        # Read num_coins from centralized config
+        num_coins = self.training_config.get("num_coins", 100)
 
-        snapshot = data.fetch_market_data(num_coins=self.num_coins)
+        print(f"Project: {self.prj.project}, Branch: {self.prj.branch}")
+        print(f"Training config: num_coins={num_coins}")
+        print(f"Fetching live data for top {num_coins} cryptocurrencies...")
+
+        snapshot = data.fetch_market_data(num_coins=num_coins)
         print(f"Fetched {snapshot.count} coins at {snapshot.timestamp}")
 
         # Extract features and store as artifact

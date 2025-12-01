@@ -13,7 +13,7 @@ Triggering:
 - Publishes 'approval_requested' event on success
 """
 
-from metaflow import step, card, Parameter, trigger_on_finish
+from metaflow import step, card, Parameter, Config, trigger_on_finish
 from obproject import ProjectFlow
 
 # Import src at module level so Metaflow detects METAFLOW_PACKAGE_POLICY
@@ -29,6 +29,9 @@ class EvaluateAnomalyFlow(ProjectFlow):
     Fetches new data (not from asset) to test model generalization.
     """
 
+    # Centralized config - num_coins comes from training_config.num_coins
+    training_config = Config("training_config", default="configs/training.json")
+
     max_anomaly_rate = Parameter(
         "max_anomaly_rate",
         default=0.20,
@@ -38,11 +41,6 @@ class EvaluateAnomalyFlow(ProjectFlow):
         "min_anomaly_rate",
         default=0.02,
         help="Minimum acceptable anomaly rate"
-    )
-    num_coins = Parameter(
-        "num_coins",
-        default=100,
-        help="Number of coins to fetch for evaluation"
     )
 
     @step
@@ -85,8 +83,11 @@ class EvaluateAnomalyFlow(ProjectFlow):
         """Fetch fresh market data for evaluation."""
         from src import data
 
-        print(f"\nFetching fresh data for top {self.num_coins} coins...")
-        snapshot = data.fetch_market_data(num_coins=self.num_coins)
+        # Read num_coins from centralized config
+        num_coins = self.training_config.get("num_coins", 100)
+
+        print(f"\nFetching fresh data for top {num_coins} coins...")
+        snapshot = data.fetch_market_data(num_coins=num_coins)
         self.feature_set = data.extract_features(snapshot)
 
         print(f"Prepared {self.feature_set.n_samples} samples x {self.feature_set.n_features} features")
