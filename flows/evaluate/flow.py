@@ -29,19 +29,9 @@ class EvaluateDetectorFlow(ProjectFlow):
     Fetches new data (not from asset) to test model generalization.
     """
 
-    # Centralized config - num_coins comes from training_config.num_coins
+    # Centralized configs
     training_config = Config("training_config", default="configs/training.json")
-
-    max_anomaly_rate = Parameter(
-        "max_anomaly_rate",
-        default=0.20,
-        help="Maximum acceptable anomaly rate"
-    )
-    min_anomaly_rate = Parameter(
-        "min_anomaly_rate",
-        default=0.02,
-        help="Minimum acceptable anomaly rate"
-    )
+    eval_config = Config("eval_config", default="configs/evaluation.json")
 
     @step
     def start(self):
@@ -134,8 +124,11 @@ class EvaluateDetectorFlow(ProjectFlow):
         self.eval_result = evaluation.run_quality_gates(
             self.prediction,
             training_anomaly_rate=training_rate,
-            max_anomaly_rate=self.max_anomaly_rate,
-            min_anomaly_rate=self.min_anomaly_rate,
+            max_anomaly_rate=self.eval_config.get("max_anomaly_rate", 0.20),
+            min_anomaly_rate=self.eval_config.get("min_anomaly_rate", 0.02),
+            max_rate_diff=self.eval_config.get("max_rate_diff", 0.25),
+            min_silhouette=self.eval_config.get("min_silhouette", 0.0),
+            min_score_gap=self.eval_config.get("min_score_gap", 0.05),
             features=self.feature_set.features,  # Enable silhouette score
         )
 

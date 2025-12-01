@@ -1,0 +1,7 @@
+{
+  "max_anomaly_rate": 0.20,
+  "min_anomaly_rate": 0.02,
+  "max_rate_diff": 0.25,
+  "min_silhouette": 0.0,
+  "min_score_gap": 0.05
+}

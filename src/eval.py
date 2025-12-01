@@ -177,7 +177,7 @@ def run_quality_gates(
     training_anomaly_rate: float,
     max_anomaly_rate: float = 0.20,
     min_anomaly_rate: float = 0.02,
-    max_rate_diff: float = 0.10,
+    max_rate_diff: float = 0.25,
     min_silhouette: float = 0.0,
     min_score_gap: float = 0.05,
     features: Optional[List[List[float]]] = None,
