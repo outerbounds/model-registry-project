@@ -20,8 +20,12 @@ candidate → evaluated → champion
 
 ### Data Pipeline
 ```
-IngestMarketDataFlow → BuildDatasetFlow → TrainDetectorFlow
-   (hourly snapshots)    (accumulates)     (trains on dataset)
+IngestMarketDataFlow → BuildDatasetFlow → TrainDetectorFlow → ValidateOutcomesFlow
+   (hourly snapshots)    (temporal features)   (trains + logs)     (24h later)
+                                                    │
+                                                    ▼
+                                              predictions/
+                                          (logged for validation)
 ```
 
 ## How to Run Flows
