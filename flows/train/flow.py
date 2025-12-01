@@ -41,7 +41,7 @@ import src
 # This replaces @trigger_on_finish(flow='IngestMarketDataFlow') which would
 # retrain on every hourly ingest - wasteful when using accumulated datasets.
 @project_trigger(event='dataset_ready')
-class TrainAnomalyFlow(ProjectFlow):
+class TrainDetectorFlow(ProjectFlow):
     """
     Train anomaly detection model on market data.
 
@@ -146,33 +146,37 @@ class TrainAnomalyFlow(ProjectFlow):
             c = a.coin_info
             print(f"  {c['symbol']:6} 24h: {c['price_change_24h']:+.1f}%  score: {a.anomaly_score:.3f}")
 
-        # Build card
-        current.card.append(Markdown("# Crypto Anomaly Detection Training"))
-        current.card.append(Markdown(f"**Data Source:** {self.data_source}"))
-        current.card.append(Markdown(f"**Timestamp:** {self.feature_set.timestamp}"))
+        # Build card with visualizations
+        from src.cards import (
+            score_distribution_chart,
+            training_summary_card,
+            top_anomalies_table,
+        )
 
-        current.card.append(Markdown("## Model Configuration"))
-        current.card.append(Table([
-            ["Algorithm", model.algorithm],
-            *[[k, str(v)] for k, v in model.hyperparameters.items()],
-            ["Training Samples", str(self.feature_set.n_samples)],
-            ["Features", str(self.feature_set.n_features)],
-        ], headers=["Parameter", "Value"]))
+        current.card.append(Markdown("# Anomaly Detection Training"))
 
-        current.card.append(Markdown("## Training Results"))
-        current.card.append(Table([
-            ["Anomalies Detected", str(self.prediction.n_anomalies)],
-            ["Anomaly Rate", f"{self.prediction.anomaly_rate:.1%}"],
-        ], headers=["Metric", "Value"]))
+        # Training summary
+        current.card.append(training_summary_card(
+            model_algorithm=model.algorithm,
+            hyperparameters=model.hyperparameters,
+            n_samples=self.feature_set.n_samples,
+            n_features=self.feature_set.n_features,
+            anomaly_rate=self.prediction.anomaly_rate,
+            data_source=self.data_source,
+        ))
 
-        current.card.append(Markdown("## Top Anomalies"))
+        # Score distribution chart - shows separation quality
+        current.card.append(Markdown("## Score Distribution"))
+        current.card.append(Markdown("*How well does the model separate normal from anomalous?*"))
+        current.card.append(score_distribution_chart(
+            scores=list(self.prediction.anomaly_scores),
+            labels=list(self.prediction.predictions),
+        ))
+
+        # Top anomalies table
+        current.card.append(Markdown("## Top Detected Anomalies"))
         if self.top_anomalies:
-            rows = [
-                [a.coin_info["symbol"], a.coin_info["name"],
-                 f"{a.coin_info['price_change_24h']:+.1f}%", f"{a.anomaly_score:.3f}"]
-                for a in self.top_anomalies
-            ]
-            current.card.append(Table(rows, headers=["Symbol", "Name", "24h Change", "Score"]))
+            current.card.append(top_anomalies_table(self.top_anomalies, limit=10))
 
         self.next(self.register)
 
@@ -221,8 +225,8 @@ class TrainAnomalyFlow(ProjectFlow):
         print(f"Algorithm: {self.trained_model.algorithm}")
         print(f"Data source: {self.data_source}")
         print(f"Anomaly rate: {self.prediction.anomaly_rate:.1%}")
-        print(f"\nNext: Run EvaluateAnomalyFlow to evaluate on fresh data")
+        print(f"\nNext: Run EvaluateDetectorFlow to evaluate on fresh data")
 
 
 if __name__ == "__main__":
-    TrainAnomalyFlow()
+    TrainDetectorFlow()

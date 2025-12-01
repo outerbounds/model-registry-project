@@ -9,7 +9,7 @@ This flow:
 5. Updates status to 'evaluated' if passed
 
 Triggering:
-- Auto-triggers when TrainAnomalyFlow completes (in Argo)
+- Auto-triggers when TrainDetectorFlow completes (in Argo)
 - Publishes 'approval_requested' event on success
 """
 
@@ -21,8 +21,8 @@ from obproject import ProjectFlow
 import src
 
 
-@trigger_on_finish(flow='TrainAnomalyFlow')
-class EvaluateAnomalyFlow(ProjectFlow):
+@trigger_on_finish(flow='TrainDetectorFlow')
+class EvaluateDetectorFlow(ProjectFlow):
     """
     Evaluate anomaly detector on fresh market data.
 
@@ -56,7 +56,7 @@ class EvaluateAnomalyFlow(ProjectFlow):
                 self.prj.asset, "anomaly_detector", instance="latest"
             )
         except Exception as e:
-            raise RuntimeError(f"No anomaly_detector found. Run TrainAnomalyFlow first: {e}")
+            raise RuntimeError(f"No anomaly_detector found. Run TrainDetectorFlow first: {e}")
 
         print(f"\nCandidate (v{self.candidate.version}):")
         print(f"  Status: {self.candidate.status.value}")
@@ -141,43 +141,52 @@ class EvaluateAnomalyFlow(ProjectFlow):
 
         print(f"\n{evaluation.format_gate_summary(self.eval_result)}")
 
-        # Build card
-        current.card.append(Markdown(f"# Anomaly Detector Evaluation"))
+        # Build card with visualizations
+        from src.cards import (
+            score_distribution_chart,
+            gates_summary,
+            model_comparison_table,
+            top_anomalies_table,
+        )
+
+        current.card.append(Markdown("# Anomaly Detector Evaluation"))
         current.card.append(Markdown(f"**Model:** v{self.candidate.version}"))
         current.card.append(Markdown(f"**Evaluation Time:** {self.feature_set.timestamp}"))
 
-        current.card.append(Markdown("## Model Info"))
-        current.card.append(Table([
-            ["Version", f"v{self.candidate.version}"],
-            ["Algorithm", model.algorithm],
-            *[[k, str(v)] for k, v in model.hyperparameters.items()],
-        ], headers=["Property", "Value"]))
+        # Quality gates with visual indicators
+        current.card.append(gates_summary(self.eval_result))
 
-        current.card.append(Markdown("## Evaluation Results"))
-        current.card.append(Table([
-            ["Evaluation Samples", str(self.prediction.n_samples)],
-            ["Anomalies Detected", str(self.prediction.n_anomalies)],
-            ["Eval Anomaly Rate", f"{self.prediction.anomaly_rate:.1%}"],
-            ["Training Anomaly Rate", f"{training_rate:.1%}"],
-        ], headers=["Metric", "Value"]))
+        # Score distribution chart
+        current.card.append(Markdown("## Score Distribution"))
+        current.card.append(score_distribution_chart(
+            scores=list(self.prediction.anomaly_scores),
+            labels=list(self.prediction.predictions),
+            title="Evaluation Score Distribution"
+        ))
 
-        current.card.append(Markdown("## Quality Gates"))
-        gate_rows = [
-            [g.name, g.threshold, g.actual, "PASS" if g.passed else "FAIL"]
-            for g in self.eval_result.gates
-        ]
-        current.card.append(Table(gate_rows, headers=["Gate", "Threshold", "Actual", "Status"]))
+        # Model comparison (candidate vs previous)
+        candidate_metrics = {
+            "version": f"v{self.candidate.version}",
+            "anomaly_rate": self.prediction.anomaly_rate,
+            "silhouette_score": self.eval_result.metrics.silhouette_score,
+            "score_gap": self.eval_result.metrics.score_gap,
+            "training_samples": int(self.candidate.annotations.get("training_samples", 0)),
+        }
+        champion_metrics = None
+        if self.has_champion:
+            champion_metrics = {
+                "version": f"v{self.champion.version}",
+                "anomaly_rate": float(self.champion.annotations.get("anomaly_rate", 0)),
+                "silhouette_score": float(self.champion.annotations.get("silhouette_score", 0)) if self.champion.annotations.get("silhouette_score") else None,
+                "score_gap": float(self.champion.annotations.get("score_gap", 0)) if self.champion.annotations.get("score_gap") else None,
+                "training_samples": int(self.champion.annotations.get("training_samples", 0)),
+            }
+        current.card.append(model_comparison_table(candidate_metrics, champion_metrics))
 
+        # Detected anomalies table
         current.card.append(Markdown("## Detected Anomalies"))
         if self.anomalies:
-            rows = [
-                [a.coin_info["symbol"], a.coin_info["name"],
-                 f"${a.coin_info['current_price']:,.2f}",
-                 f"{a.coin_info['price_change_24h']:+.1f}%",
-                 f"{a.anomaly_score:.3f}"]
-                for a in self.anomalies
-            ]
-            current.card.append(Table(rows, headers=["Symbol", "Name", "Price", "24h Change", "Score"]))
+            current.card.append(top_anomalies_table(self.anomalies, limit=10))
 
         self.next(self.update_status)
 
@@ -226,8 +235,8 @@ class EvaluateAnomalyFlow(ProjectFlow):
         print(f"Result: {result}")
         print(f"Anomaly rate: {self.prediction.anomaly_rate:.1%}")
         if self.eval_result.all_passed:
-            print(f"\nNext: Run PromoteAnomalyFlow to promote to champion")
+            print(f"\nNext: Run PromoteDetectorFlow to promote to champion")
 
 
 if __name__ == "__main__":
-    EvaluateAnomalyFlow()
+    EvaluateDetectorFlow()

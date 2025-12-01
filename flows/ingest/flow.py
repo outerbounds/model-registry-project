@@ -111,7 +111,9 @@ class IngestMarketDataFlow(ProjectFlow):
         if self.snapshot_path:
             print(f"  Parquet: {self.snapshot_path}")
 
-        # Build card
+        # Build card with visualizations
+        from src.cards import feature_histograms, price_change_heatmap
+
         stats = data.get_feature_stats(self.feature_set)
 
         current.card.append(Markdown("# Market Data Ingestion"))
@@ -123,6 +125,22 @@ class IngestMarketDataFlow(ProjectFlow):
             ["Coins Fetched", str(self.feature_set.n_samples)],
             ["Features Extracted", str(self.feature_set.n_features)],
         ], headers=["Metric", "Value"]))
+
+        # Feature distribution histograms
+        current.card.append(Markdown("## Feature Distributions"))
+        current.card.append(Markdown("*Distribution of each feature across all coins*"))
+        current.card.append(feature_histograms(
+            features=self.feature_set.features,
+            feature_names=self.feature_set.feature_names,
+        ))
+
+        # Price change heatmap for top coins
+        current.card.append(Markdown("## Price Changes Heatmap"))
+        current.card.append(Markdown("*Top 20 coins by market cap across timeframes*"))
+        current.card.append(price_change_heatmap(
+            coin_info=self.feature_set.coin_info,
+            limit=20,
+        ))
 
         current.card.append(Markdown("## Feature Statistics"))
         rows = [
@@ -142,7 +160,7 @@ class IngestMarketDataFlow(ProjectFlow):
         print(f"DataAsset: market_snapshot")
         print(f"Samples: {self.feature_set.n_samples} coins")
         print(f"Timestamp: {self.timestamp}")
-        print(f"\nNext: Run TrainAnomalyFlow to train on this data")
+        print(f"\nNext: Run TrainDetectorFlow to train on this data")
 
 
 if __name__ == "__main__":

@@ -8,10 +8,10 @@ This project uses the **champion/challenger** pattern for model lifecycle:
 
 | Status | Meaning | How it's set |
 |--------|---------|--------------|
-| `candidate` | Newly trained, not yet evaluated | TrainAnomalyFlow |
-| `evaluated` | Passed point-in-time quality gates | EvaluateAnomalyFlow |
+| `candidate` | Newly trained, not yet evaluated | TrainDetectorFlow |
+| `evaluated` | Passed point-in-time quality gates | EvaluateDetectorFlow |
 | `challenger` | Running in parallel with champion | Deployment config |
-| `champion` | Primary model, blessed for serving | PromoteAnomalyFlow |
+| `champion` | Primary model, blessed for serving | PromoteDetectorFlow |
 | `retired` | Previous champion, replaced | (when new champion is promoted) |
 
 The idea that will become important is to view these states as ML Asset quality designations, and not confuse such status tags with deployment environments.
@@ -124,7 +124,7 @@ python flows/ingest/flow.py run
 python flows/ingest/flow.py run --num_coins 200
 ```
 
-### TrainAnomalyFlow
+### TrainDetectorFlow
 
 Trains model, registers as `candidate`. Can use registered data or fetch fresh:
 
@@ -136,7 +136,7 @@ python flows/train/flow.py run --contamination 0.10
 python flows/train/flow.py run --data_version latest
 ```
 
-### EvaluateAnomalyFlow
+### EvaluateDetectorFlow
 
 Evaluates candidate, applies quality gates, updates status to `evaluated`:
 
@@ -144,7 +144,7 @@ Evaluates candidate, applies quality gates, updates status to `evaluated`:
 python flows/evaluate/flow.py run --max_anomaly_rate 0.20
 ```
 
-### PromoteAnomalyFlow
+### PromoteDetectorFlow
 
 Promotes model to `champion` status:
 
@@ -214,7 +214,7 @@ To skip human approval, edit `flows/promote/flow.py`:
 @project_trigger(event="model_approved")
 
 # With:
-@trigger_on_finish(flow='EvaluateAnomalyFlow')
+@trigger_on_finish(flow='EvaluateDetectorFlow')
 ```
 
 ### Making Promotion Manual-Only

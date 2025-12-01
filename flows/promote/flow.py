@@ -37,9 +37,9 @@ import src
 
 
 # OPTIONAL: Remove this decorator for manual-only promotion
-# Or replace with @trigger_on_finish(flow='EvaluateAnomalyFlow') for full automation
+# Or replace with @trigger_on_finish(flow='EvaluateDetectorFlow') for full automation
 @project_trigger(event="model_approved")
-class PromoteAnomalyFlow(ProjectFlow):
+class PromoteDetectorFlow(ProjectFlow):
     """
     Promote anomaly detector to champion status.
 
@@ -138,4 +138,4 @@ class PromoteAnomalyFlow(ProjectFlow):
 
 
 if __name__ == "__main__":
-    PromoteAnomalyFlow()
+    PromoteDetectorFlow()
