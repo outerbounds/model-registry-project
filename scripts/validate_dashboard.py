@@ -211,10 +211,12 @@ class DashboardValidator:
             checks["shows_samples"] = "sample" in page_content.lower() or "100" in page_content
             print(f"  Sample counts shown: {'PASS' if checks['shows_samples'] else 'FAIL'}")
 
-            # Check timestamps are formatted (not raw ISO)
-            # Good: "2025-12-01 05:41:00", Bad: "2025-12-01T05:41:00.065898+00:00"
-            raw_timestamp = "+00:00" in page_content and "T" in page_content
-            checks["timestamps_formatted"] = not raw_timestamp or "format_timestamp" in page_content
+            # Check timestamps are formatted (not raw ISO) in visible text
+            # Raw timestamps in title="" attributes are OK (for hover tooltips)
+            # Good: "2025-12-01 05:41:00", Bad: visible "2025-12-01T05:41:00.065898+00:00"
+            visible_text = await self.page.inner_text("body")
+            raw_timestamp_visible = "+00:00" in visible_text and "T" in visible_text
+            checks["timestamps_formatted"] = not raw_timestamp_visible
             print(f"  Timestamps formatted: {'PASS' if checks['timestamps_formatted'] else 'FAIL'}")
 
             # Check for feature schema section
