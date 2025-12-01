@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+
+{% block title %}Model Registry{% endblock %}
+
+{% block content %}
+<h1>Model Registry</h1>
+
+<!-- Champion Info -->
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">Champion Model</div>
+        {% if champion_version %}
+            <span class="badge badge-success">v{{ champion_version }}</span>
+        {% else %}
+            <span class="badge badge-gray">None</span>
+        {% endif %}
+    </div>
+    {% if not champion_version %}
+    <div class="alert alert-warning">
+        No champion model has been promoted yet. Select an evaluated model below and click "Promote" to set it as champion.
+    </div>
+    {% endif %}
+</div>
+
+<!-- Model Comparison Tool -->
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">Compare Models</div>
+    </div>
+    <div class="flex gap-2 items-center" style="flex-wrap: wrap;">
+        <div>
+            <label for="compare-v1">Version 1</label>
+            <select id="compare-v1" style="min-width: 180px;">
+                {% for v in versions %}
+                <option value="v{{ v.version }}">{{ v.version|format_version }} ({{ v.status }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div style="padding-top: 1.5rem;">vs</div>
+        <div>
+            <label for="compare-v2">Version 2</label>
+            <select id="compare-v2" style="min-width: 180px;">
+                {% for v in versions %}
+                <option value="v{{ v.version }}" {% if loop.index == 2 %}selected{% endif %}>{{ v.version|format_version }} ({{ v.status }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div style="padding-top: 1.5rem;">
+            <button class="btn btn-primary" onclick="compareModels()">Compare</button>
+        </div>
+    </div>
+    <div id="comparison-results" style="margin-top: 1rem; display: none;">
+        <!-- Results will be inserted here -->
+    </div>
+</div>
+
+<!-- Model Versions Table -->
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">Model Versions</div>
+        <span class="badge badge-info">{{ versions|length }} versions</span>
+    </div>
+
+    {% if versions %}
+    <div class="table-wrapper">
+    <table style="table-layout: auto;">
+        <thead>
+            <tr>
+                <th style="width: 180px;">Version</th>
+                <th style="width: 100px;">Status</th>
+                <th style="width: 120px;">Algorithm</th>
+                <th style="width: 120px;">Training Samples</th>
+                <th style="width: 100px;">Anomaly Rate</th>
+                <th style="width: 90px;">Silhouette</th>
+                <th style="width: 90px;">Score Gap</th>
+                <th style="width: 140px;">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for v in versions %}
+            <tr>
+                <td>
+                    <span class="font-mono" title="{{ v.version }}">{{ v.version|format_version }}</span>
+                    {% if v.version == champion_version %}
+                        <span class="badge badge-success badge-sm" style="margin-left: 0.5rem;">Champion</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if v.status == 'champion' %}
+                        <span class="badge badge-success">{{ v.status }}</span>
+                    {% elif v.status == 'evaluated' %}
+                        <span class="badge badge-purple">{{ v.status }}</span>
+                    {% elif v.status == 'candidate' %}
+                        <span class="badge badge-warning">{{ v.status }}</span>
+                    {% else %}
+                        <span class="badge badge-gray">{{ v.status }}</span>
+                    {% endif %}
+                </td>
+                <td>{{ v.algorithm or '-' }}</td>
+                <td>{{ v.training_samples or '-' }}</td>
+                <td>{{ "%.1f"|format(v.anomaly_rate * 100) }}%</td>
+                <td>
+                    {% if v.silhouette_score is not none %}
+                        {{ "%.3f"|format(v.silhouette_score) }}
+                    {% else %}
+                        <span class="text-muted">-</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if v.score_gap is not none %}
+                        {{ "%.3f"|format(v.score_gap) }}
+                    {% else %}
+                        <span class="text-muted">-</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if v.status == 'evaluated' and v.version != champion_version %}
+                        <form action="/api/models/promote?branch={{ branch }}" method="post" style="display: inline;" onsubmit="return confirm('Promote v{{ v.version }} to champion?');">
+                            <input type="hidden" name="version" value="{{ v.version }}">
+                            <button type="submit" class="btn btn-success btn-sm">Promote</button>
+                        </form>
+                    {% elif v.version == champion_version %}
+                        <span class="text-muted">Current champion</span>
+                    {% elif v.status == 'candidate' %}
+                        <span class="text-muted">Awaiting evaluation</span>
+                    {% else %}
+                        <span class="text-muted">-</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-state-icon">&#x1F916;</div>
+        <p>No model versions registered yet</p>
+        <p class="text-muted mt-1">Run TrainFlow to create models</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Model Lifecycle -->
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">Model Lifecycle</div>
+    </div>
+    <div style="display: flex; align-items: center; justify-content: space-around; padding: 1rem; background: var(--sand-100); border-radius: 0.5rem;">
+        <div class="text-center">
+            <span class="badge badge-warning" style="font-size: 1rem; padding: 0.5rem 1rem;">Candidate</span>
+            <div class="text-muted mt-1" style="font-size: 0.875rem;">Just trained</div>
+        </div>
+        <div style="color: var(--gray-200); font-size: 1.5rem;">&#x2192;</div>
+        <div class="text-center">
+            <span class="badge badge-purple" style="font-size: 1rem; padding: 0.5rem 1rem;">Evaluated</span>
+            <div class="text-muted mt-1" style="font-size: 0.875rem;">Passed quality gates</div>
+        </div>
+        <div style="color: var(--gray-200); font-size: 1.5rem;">&#x2192;</div>
+        <div class="text-center">
+            <span class="badge badge-success" style="font-size: 1rem; padding: 0.5rem 1rem;">Champion</span>
+            <div class="text-muted mt-1" style="font-size: 0.875rem;">Production serving</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function compareModels() {
+    const v1 = document.getElementById('compare-v1').value;
+    const v2 = document.getElementById('compare-v2').value;
+    const branch = new URLSearchParams(window.location.search).get('branch') || '{{ branch }}';
+
+    if (v1 === v2) {
+        alert('Please select two different versions to compare');
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/models/compare?v1=${v1}&v2=${v2}&branch=${branch}`);
+        const data = await response.json();
+
+        if (response.ok) {
+            const resultsDiv = document.getElementById('comparison-results');
+            resultsDiv.style.display = 'block';
+            resultsDiv.innerHTML = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Metric</th>
+                            <th>${data.v1.version}</th>
+                            <th>${data.v2.version}</th>
+                            <th>Difference</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Status</td>
+                            <td><span class="badge badge-${data.v1.status === 'champion' ? 'success' : data.v1.status === 'evaluated' ? 'info' : 'warning'}">${data.v1.status}</span></td>
+                            <td><span class="badge badge-${data.v2.status === 'champion' ? 'success' : data.v2.status === 'evaluated' ? 'info' : 'warning'}">${data.v2.status}</span></td>
+                            <td>-</td>
+                        </tr>
+                        <tr>
+                            <td>Algorithm</td>
+                            <td>${data.v1.algorithm || '-'}</td>
+                            <td>${data.v2.algorithm || '-'}</td>
+                            <td>-</td>
+                        </tr>
+                        <tr>
+                            <td>Training Samples</td>
+                            <td>${data.v1.training_samples}</td>
+                            <td>${data.v2.training_samples}</td>
+                            <td>${data.v1.training_samples - data.v2.training_samples}</td>
+                        </tr>
+                        <tr>
+                            <td>Anomaly Rate</td>
+                            <td>${(data.v1.anomaly_rate * 100).toFixed(1)}%</td>
+                            <td>${(data.v2.anomaly_rate * 100).toFixed(1)}%</td>
+                            <td>${((data.v1.anomaly_rate - data.v2.anomaly_rate) * 100).toFixed(1)}%</td>
+                        </tr>
+                        <tr>
+                            <td>Silhouette Score</td>
+                            <td>${data.v1.silhouette_score?.toFixed(3) || '-'}</td>
+                            <td>${data.v2.silhouette_score?.toFixed(3) || '-'}</td>
+                            <td>${data.v1.silhouette_score && data.v2.silhouette_score ? (data.v1.silhouette_score - data.v2.silhouette_score).toFixed(3) : '-'}</td>
+                        </tr>
+                        <tr>
+                            <td>Score Gap</td>
+                            <td>${data.v1.score_gap?.toFixed(3) || '-'}</td>
+                            <td>${data.v2.score_gap?.toFixed(3) || '-'}</td>
+                            <td>${data.v1.score_gap && data.v2.score_gap ? (data.v1.score_gap - data.v2.score_gap).toFixed(3) : '-'}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            `;
+        } else {
+            alert('Comparison failed: ' + (data.detail || 'Unknown error'));
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+</script>
+{% endblock %}

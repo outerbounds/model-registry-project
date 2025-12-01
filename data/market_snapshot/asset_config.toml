@@ -1,0 +1,10 @@
+name = "Market Snapshot"
+id = "market_snapshot"
+description = "Live cryptocurrency market data from CoinGecko"
+
+[properties]
+source = "coingecko"
+data_type = "market_data"
+
+[tags]
+# Instance-specific tags (e.g., ingestion timestamp) belong in register_data() tags

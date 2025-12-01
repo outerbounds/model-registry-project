@@ -1,0 +1,9 @@
+name = "Evaluation Results"
+id = "evaluation_results"
+description = "Model evaluation records with anomaly detection metrics"
+
+[properties]
+tracks = "anomaly_detector"
+
+[tags]
+# Instance-specific decision (approve, reject) belongs in register_data() tags

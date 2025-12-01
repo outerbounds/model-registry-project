@@ -1,0 +1,27 @@
+name: anomaly-dash
+port: 8001
+
+commands:
+  - "gunicorn --workers 1 --worker-class uvicorn.workers.UvicornWorker --timeout 0 --bind 0.0.0.0:8001 deployments.dashboard.app:app"
+
+dependencies:
+  pypi:
+    outerbounds: ""
+    scikit-learn: ""
+    pandas: ""
+    numpy: ""
+    pyarrow: ""
+    requests: ""
+    fastapi: ""
+    uvicorn: ""
+    gunicorn: ""
+    jinja2: ""
+    aiofiles: ""
+    python-multipart: ""
+    ob-project-utils: "0.2.4rc3"
+
+compute_pools:
+  - c5-2x-deployment
+
+auth:
+  type: Browser

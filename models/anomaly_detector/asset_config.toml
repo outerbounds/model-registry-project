@@ -1,0 +1,10 @@
+name = "Anomaly Detector"
+id = "anomaly_detector"
+description = "Isolation Forest model for crypto market anomaly detection"
+
+[properties]
+algorithm = "IsolationForest"
+framework = "sklearn"
+
+[tags]
+# Instance-specific tags (status, promoted_from) belong in register_model() tags

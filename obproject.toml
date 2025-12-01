@@ -1,0 +1,32 @@
+platform = "dev-yellow.outerbounds.xyz"
+project = "crypto_anomaly"
+title = "Crypto Market Anomaly Detection"
+description = "Real-time anomaly detection on live cryptocurrency market data from CoinGecko"
+
+# For local testing: omit [dev-assets] so read and write use the same branch
+# This allows testing the full pipeline locally.
+#
+# For production: uncomment to read from prod while writing to user branch:
+# [dev-assets]
+# branch = "main"
+
+# Map code branches to environment names
+[branch_to_environment]
+"main" = "production"
+"*" = "dev"
+
+# Production environment (main branch)
+[environments.production]
+perimeter = "default"
+
+[environments.production.flow_configs]
+model_config = "configs/model.json"
+training_config = "configs/training.json"
+
+# Development environment (all other branches)
+[environments.dev]
+perimeter = "default"
+
+[environments.dev.flow_configs]
+model_config = "configs/model.json"
+training_config = "configs/training.json"

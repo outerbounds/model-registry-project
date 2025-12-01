@@ -1,0 +1,8 @@
+{
+  "algorithm": "local_outlier_factor",
+  "hyperparameters": {
+    "n_neighbors": 20,
+    "contamination": 0.1,
+    "n_jobs": -1
+  }
+}

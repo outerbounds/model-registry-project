@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+
+{% block title %}Data Explorer{% endblock %}
+
+{% block content %}
+<h1>Data Explorer</h1>
+
+<!-- Data Assets -->
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">Data Assets</div>
+    </div>
+    <div class="table-wrapper">
+    <table style="table-layout: auto;">
+        <thead>
+            <tr>
+                <th style="width: 200px;">Asset</th>
+                <th style="width: 180px;">Latest Version</th>
+                <th style="width: 100px;">Samples</th>
+                <th style="width: 180px;">Timestamp</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for asset in data_assets %}
+            <tr>
+                <td>
+                    <strong>{{ asset.name }}</strong>
+                    {% if asset.name == 'market_snapshot' %}
+                        <div class="text-muted" style="font-size: 0.75rem;">Single point-in-time market data</div>
+                    {% elif asset.name == 'training_dataset' %}
+                        <div class="text-muted" style="font-size: 0.75rem;">Accumulated snapshots for training</div>
+                    {% elif asset.name == 'eval_holdout' %}
+                        <div class="text-muted" style="font-size: 0.75rem;">Time-split holdout for evaluation</div>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if asset.version %}
+                        <span class="font-mono" title="{{ asset.version }}">{{ asset.version|format_version }}</span>
+                    {% else %}
+                        <span class="text-muted">Not registered</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if asset.samples %}
+                        {{ asset.samples }}
+                    {% else %}
+                        <span class="text-muted">-</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if asset.timestamp %}
+                        <span class="font-mono" style="font-size: 0.875rem;">{{ asset.timestamp }}</span>
+                    {% else %}
+                        <span class="text-muted">-</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<!-- Feature Schema -->
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">Feature Schema</div>
+    </div>
+    <div class="table-wrapper">
+    <table style="table-layout: auto;">
+        <thead>
+            <tr>
+                <th style="width: 200px;">Column</th>
+                <th style="width: 80px;">Type</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><code>price_change_pct_1h</code></td>
+                <td>float</td>
+                <td class="text-muted">1-hour price change percentage</td>
+            </tr>
+            <tr>
+                <td><code>price_change_pct_24h</code></td>
+                <td>float</td>
+                <td class="text-muted">24-hour price change percentage</td>
+            </tr>
+            <tr>
+                <td><code>price_change_pct_7d</code></td>
+                <td>float</td>
+                <td class="text-muted">7-day price change percentage</td>
+            </tr>
+            <tr>
+                <td><code>market_cap_to_volume</code></td>
+                <td>float</td>
+                <td class="text-muted">Market cap / 24h trading volume ratio</td>
+            </tr>
+            <tr>
+                <td><code>ath_change_pct</code></td>
+                <td>float</td>
+                <td class="text-muted">Percentage change from all-time high</td>
+            </tr>
+            <tr>
+                <td><code>sparkline_volatility</code></td>
+                <td>float</td>
+                <td class="text-muted">7-day price volatility (coefficient of variation)</td>
+            </tr>
+            <tr style="background: var(--gray-50);">
+                <td colspan="3" style="font-weight: 600; color: var(--gray-600);">Metadata Columns</td>
+            </tr>
+            <tr>
+                <td><code>coin_id</code></td>
+                <td>string</td>
+                <td class="text-muted">CoinGecko coin identifier</td>
+            </tr>
+            <tr>
+                <td><code>symbol</code></td>
+                <td>string</td>
+                <td class="text-muted">Trading symbol (e.g., BTC)</td>
+            </tr>
+            <tr>
+                <td><code>name</code></td>
+                <td>string</td>
+                <td class="text-muted">Full coin name</td>
+            </tr>
+            <tr>
+                <td><code>current_price</code></td>
+                <td>float</td>
+                <td class="text-muted">Current USD price</td>
+            </tr>
+            <tr>
+                <td><code>market_cap</code></td>
+                <td>float</td>
+                <td class="text-muted">Market capitalization in USD</td>
+            </tr>
+            <tr>
+                <td><code>snapshot_timestamp</code></td>
+                <td>timestamp</td>
+                <td class="text-muted">When the snapshot was taken</td>
+            </tr>
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<!-- Raw Snapshots -->
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">Raw Parquet Snapshots</div>
+        <span class="badge badge-info">{{ snapshots|length }} snapshots</span>
+    </div>
+
+    {% if snapshots %}
+    <div class="table-wrapper">
+    <table style="table-layout: auto;">
+        <thead>
+            <tr>
+                <th style="width: 120px;">Date</th>
+                <th style="width: 80px;">Hour</th>
+                <th>Filename</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for snap in snapshots[:24] %}
+            <tr>
+                <td><span class="font-mono">{{ snap.date }}</span></td>
+                <td><span class="font-mono">{{ snap.hour }}:00</span></td>
+                <td><span class="font-mono text-muted" style="font-size: 0.75rem;">{{ snap.filename }}</span></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% if snapshots|length > 24 %}
+    <div class="text-center text-muted mt-1">
+        Showing 24 of {{ snapshots|length }} snapshots
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-state-icon">&#x1F4C1;</div>
+        <p>No snapshots in storage yet</p>
+        <p class="text-muted mt-1">Run IngestFlow to create snapshots</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Storage Info -->
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">Storage Layout</div>
+    </div>
+    <pre style="background: var(--gray-900); color: var(--gray-100); padding: 1rem; border-radius: 0.5rem; font-size: 0.875rem; overflow-x: auto;">
+{datastore_root}/projects/{{ project }}/branches/{{ branch }}/
+├── snapshots/
+│   └── dt=YYYY-MM-DD/
+│       └── hour=HH/
+│           └── snapshot_{run_id}.parquet
+└── datasets/
+    ├── training_dataset/
+    │   └── v_{run_id}/
+    │       └── part-XXXX.parquet
+    └── eval_holdout/
+        └── v_{run_id}/
+            └── part-XXXX.parquet</pre>
+</div>
+{% endblock %}

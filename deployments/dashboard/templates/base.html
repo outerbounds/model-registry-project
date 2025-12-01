@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Dashboard{% endblock %} | Crypto Anomaly Detection</title>
+    <style>
+        :root {
+            /* Outerbounds Brand Colors */
+            /* Primary - Green */
+            --primary: #4C9878;
+            --primary-light: #88BBA5;
+            --primary-dark: #428A6B;
+            --primary-darker: #37795D;
+
+            /* Semantic Colors */
+            --success: #4C9878;
+            --success-light: #DAE8E2;
+            --warning: #FBD784;
+            --warning-dark: #E4B957;
+            --danger: #E6786C;
+            --danger-light: #FCE5E2;
+            --danger-dark: #E35F50;
+
+            /* Purple accent */
+            --purple: #976BAC;
+            --purple-light: #E7D4F3;
+            --purple-dark: #8E53A9;
+
+            /* Blue accent */
+            --blue: #88B7E3;
+            --blue-light: #DFE9F4;
+            --blue-dark: #6799C8;
+
+            /* Yellow accent */
+            --yellow: #FBD784;
+            --yellow-light: #FAF1DB;
+            --yellow-dark: #D7A530;
+
+            /* Neutrals - Grey */
+            --gray-50: #FAF7F4;
+            --gray-100: #EBE8E5;
+            --gray-200: #B2AFAC;
+            --gray-300: #6A6867;
+            --gray-600: #6A6867;
+            --gray-800: #31302F;
+            --gray-900: #31302F;
+
+            /* Sand */
+            --sand-100: #FAF7F4;
+            --sand-200: #F2EEEA;
+            --sand-300: #EEE9E4;
+
+            --white: #FFFFFF;
+            --black: #31302F;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--sand-200);
+            color: var(--black);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 1rem;
+        }
+
+        /* Navigation */
+        nav {
+            background: var(--black);
+            color: var(--white);
+            padding: 1rem 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        nav .container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .nav-brand {
+            font-weight: 600;
+            font-size: 1.25rem;
+            color: var(--primary-light);
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .nav-links a {
+            color: var(--gray-200);
+            text-decoration: none;
+            padding: 0.5rem 0;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .nav-links a:hover,
+        .nav-links a.active {
+            color: var(--white);
+            border-bottom-color: var(--primary);
+        }
+
+        .nav-meta {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 0.875rem;
+            color: var(--gray-200);
+        }
+
+        .branch-selector {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            position: relative;
+        }
+
+        .branch-selector input {
+            background: var(--gray-800);
+            color: var(--white);
+            border: 1px solid var(--gray-300);
+            padding: 0.375rem 0.5rem;
+            border-radius: 0.375rem;
+            font-size: 0.875rem;
+            width: 180px;
+            font-family: ui-monospace, monospace;
+        }
+
+        .branch-selector input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .branch-selector input::placeholder {
+            color: var(--gray-300);
+        }
+
+        .branch-label {
+            color: var(--gray-200);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+        }
+
+        .branch-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--gray-800);
+            border: 1px solid var(--gray-300);
+            border-radius: 0.375rem;
+            margin-top: 0.25rem;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+        }
+
+        .branch-dropdown.show {
+            display: block;
+        }
+
+        .branch-option {
+            padding: 0.5rem 0.75rem;
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-family: ui-monospace, monospace;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .branch-option:hover {
+            background: var(--gray-600);
+        }
+
+        .branch-option .branch-hint {
+            font-size: 0.7rem;
+            color: var(--gray-300);
+            font-family: inherit;
+        }
+
+        .branch-go-btn {
+            background: var(--primary);
+            color: var(--white);
+            border: none;
+            padding: 0.375rem 0.625rem;
+            border-radius: 0.375rem;
+            font-size: 0.75rem;
+            cursor: pointer;
+        }
+
+        .branch-go-btn:hover {
+            background: var(--primary-dark);
+        }
+
+        /* Main content */
+        main {
+            padding: 2rem 0;
+        }
+
+        h1 {
+            font-size: 1.875rem;
+            margin-bottom: 1.5rem;
+            color: var(--black);
+        }
+
+        h2 {
+            font-size: 1.25rem;
+            margin-bottom: 1rem;
+            color: var(--black);
+        }
+
+        /* Cards */
+        .card {
+            background: var(--white);
+            border-radius: 0.75rem;
+            box-shadow: 0 1px 3px rgba(49, 48, 47, 0.08);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            border: 1px solid var(--sand-300);
+            overflow: hidden;
+            min-width: 0;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--gray-200);
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .card-title {
+            font-weight: 600;
+            font-size: 1.125rem;
+            flex-shrink: 0;
+        }
+
+        /* Grid */
+        .grid {
+            display: grid;
+            gap: 1.5rem;
+        }
+
+        .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+        @media (max-width: 1024px) {
+            .grid-4 {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 768px) {
+            .grid-2, .grid-3, .grid-4 {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Status badges */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+
+        .badge-success {
+            background: var(--success-light);
+            color: var(--primary-darker);
+        }
+
+        .badge-warning {
+            background: var(--yellow-light);
+            color: var(--yellow-dark);
+        }
+
+        .badge-danger {
+            background: var(--danger-light);
+            color: var(--danger-dark);
+        }
+
+        .badge-info {
+            background: var(--blue-light);
+            color: var(--blue-dark);
+        }
+
+        .badge-purple {
+            background: var(--purple-light);
+            color: var(--purple-dark);
+        }
+
+        .badge-gray {
+            background: var(--gray-100);
+            color: var(--gray-300);
+        }
+
+        /* Tables */
+        .table-wrapper {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+
+        th, td {
+            text-align: left;
+            padding: 0.75rem;
+            border-bottom: 1px solid var(--sand-300);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* Allow wrapping for description cells */
+        td.wrap {
+            white-space: normal;
+            word-wrap: break-word;
+        }
+
+        th {
+            font-weight: 600;
+            color: var(--gray-300);
+            font-size: 0.875rem;
+            text-transform: uppercase;
+        }
+
+        tr:hover {
+            background: var(--sand-100);
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+            text-decoration: none;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: var(--white);
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-dark);
+        }
+
+        .btn-secondary {
+            background: var(--sand-300);
+            color: var(--black);
+        }
+
+        .btn-secondary:hover {
+            background: var(--gray-200);
+        }
+
+        .btn-success {
+            background: var(--primary);
+            color: var(--white);
+        }
+
+        .btn-success:hover {
+            background: var(--primary-dark);
+        }
+
+        .btn-purple {
+            background: var(--purple);
+            color: var(--white);
+        }
+
+        .btn-purple:hover {
+            background: var(--purple-dark);
+        }
+
+        .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+        }
+
+        /* Stats */
+        .stat {
+            text-align: center;
+            overflow: hidden;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--black);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .stat-value.font-mono {
+            font-size: 1.25rem;
+        }
+
+        .stat-label {
+            font-size: 0.875rem;
+            color: var(--gray-300);
+        }
+
+        /* Metric display */
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--sand-200);
+            gap: 1rem;
+        }
+
+        .metric:last-child {
+            border-bottom: none;
+        }
+
+        .metric-label {
+            color: var(--gray-300);
+            flex-shrink: 0;
+        }
+
+        .metric-value {
+            font-weight: 600;
+            color: var(--black);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            text-align: right;
+        }
+
+        /* Forms */
+        input, select {
+            padding: 0.5rem 0.75rem;
+            border: 1px solid var(--sand-300);
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            background: var(--white);
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(76, 152, 120, 0.15);
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            color: var(--gray-300);
+        }
+
+        /* Alerts */
+        .alert {
+            padding: 1rem;
+            border-radius: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .alert-info {
+            background: var(--blue-light);
+            color: var(--blue-dark);
+        }
+
+        .alert-warning {
+            background: var(--yellow-light);
+            color: var(--yellow-dark);
+        }
+
+        .alert-success {
+            background: var(--success-light);
+            color: var(--primary-darker);
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: var(--gray-300);
+        }
+
+        .empty-state-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+
+        /* Code blocks */
+        code {
+            background: var(--sand-200);
+            padding: 0.125rem 0.375rem;
+            border-radius: 0.25rem;
+            font-size: 0.875rem;
+            color: var(--purple-dark);
+        }
+
+        pre {
+            background: var(--black);
+            color: var(--gray-100);
+            padding: 1rem;
+            border-radius: 0.5rem;
+            overflow-x: auto;
+        }
+
+        /* Truncated text */
+        .truncate {
+            max-width: 200px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .truncate-wide {
+            max-width: 300px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Version display - short form */
+        .version-short {
+            font-family: ui-monospace, monospace;
+            font-size: 0.875rem;
+        }
+
+        .version-full {
+            font-family: ui-monospace, monospace;
+            font-size: 0.75rem;
+            color: var(--gray-300);
+            word-break: break-all;
+        }
+
+        /* Utility classes */
+        .text-muted { color: var(--gray-300); }
+        .text-success { color: var(--primary); }
+        .text-danger { color: var(--danger); }
+        .text-purple { color: var(--purple); }
+        .text-right { text-align: right; }
+        .text-center { text-align: center; }
+        .font-mono { font-family: ui-monospace, monospace; }
+        .mt-1 { margin-top: 0.5rem; }
+        .mt-2 { margin-top: 1rem; }
+        .mb-1 { margin-bottom: 0.5rem; }
+        .mb-2 { margin-bottom: 1rem; }
+        .flex { display: flex; }
+        .flex-between { justify-content: space-between; }
+        .items-center { align-items: center; }
+        .gap-1 { gap: 0.5rem; }
+        .gap-2 { gap: 1rem; }
+    </style>
+</head>
+<body>
+    <nav>
+        <div class="container">
+            <div class="nav-brand">Crypto Anomaly Detection</div>
+            <div class="nav-links">
+                <a href="/?branch={{ branch }}" class="{% if request.url.path == '/' %}active{% endif %}">Overview</a>
+                <a href="/data?branch={{ branch }}" class="{% if request.url.path == '/data' %}active{% endif %}">Data</a>
+                <a href="/models?branch={{ branch }}" class="{% if request.url.path == '/models' %}active{% endif %}">Models</a>
+            </div>
+            <div class="nav-meta">
+                <span>{{ project }}</span>
+                <div class="branch-selector">
+                    <span class="branch-label">Branch:</span>
+                    <input type="text"
+                           id="branch-input"
+                           value="{{ branch }}"
+                           placeholder="e.g. user.name@company.com"
+                           onfocus="showBranchDropdown()"
+                           onkeydown="handleBranchKeydown(event)">
+                    <div id="branch-dropdown" class="branch-dropdown"></div>
+                    <button class="branch-go-btn" onclick="switchToBranch()">Go</button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <script>
+        // Branch management with localStorage
+        const STORAGE_KEY = 'dashboard_recent_branches';
+        const SUGGESTED = {{ suggested_branches | tojson }};
+        const CURRENT_BRANCH = '{{ branch }}';
+
+        function getRecentBranches() {
+            try {
+                return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+            } catch {
+                return [];
+            }
+        }
+
+        function saveRecentBranch(branch) {
+            let recent = getRecentBranches();
+            // Remove if exists, add to front
+            recent = recent.filter(b => b !== branch);
+            recent.unshift(branch);
+            // Keep max 10
+            recent = recent.slice(0, 10);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(recent));
+        }
+
+        function getAllBranches() {
+            const recent = getRecentBranches();
+            const all = new Set([...recent, ...SUGGESTED]);
+            // Ensure current branch is included
+            all.add(CURRENT_BRANCH);
+            return Array.from(all);
+        }
+
+        function showBranchDropdown() {
+            const dropdown = document.getElementById('branch-dropdown');
+            const input = document.getElementById('branch-input');
+            const filter = input.value.toLowerCase();
+
+            const branches = getAllBranches().filter(b =>
+                b.toLowerCase().includes(filter)
+            );
+
+            const recent = getRecentBranches();
+
+            dropdown.innerHTML = branches.map(b => {
+                const isRecent = recent.includes(b);
+                const isCurrent = b === CURRENT_BRANCH;
+                const hint = isCurrent ? 'current' : (isRecent ? 'recent' : 'suggested');
+                return `<div class="branch-option" onclick="selectBranch('${b}')">
+                    <span>${b}</span>
+                    <span class="branch-hint">${hint}</span>
+                </div>`;
+            }).join('');
+
+            dropdown.classList.add('show');
+        }
+
+        function hideBranchDropdown() {
+            setTimeout(() => {
+                document.getElementById('branch-dropdown').classList.remove('show');
+            }, 200);
+        }
+
+        function selectBranch(branch) {
+            document.getElementById('branch-input').value = branch;
+            hideBranchDropdown();
+            switchToBranch();
+        }
+
+        function switchToBranch() {
+            const branch = document.getElementById('branch-input').value.trim();
+            if (!branch) return;
+
+            saveRecentBranch(branch);
+
+            const url = new URL(window.location.href);
+            url.searchParams.set('branch', branch);
+            window.location.href = url.toString();
+        }
+
+        function handleBranchKeydown(event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                switchToBranch();
+            } else if (event.key === 'Escape') {
+                hideBranchDropdown();
+            } else {
+                // Filter as user types
+                setTimeout(showBranchDropdown, 10);
+            }
+        }
+
+        // Save current branch on page load
+        saveRecentBranch(CURRENT_BRANCH);
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('.branch-selector')) {
+                hideBranchDropdown();
+            }
+        });
+
+        // Copy command to clipboard
+        function copyCommand(command) {
+            navigator.clipboard.writeText(command).then(function() {
+                // Show brief feedback
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = 'Copied!';
+                btn.style.background = 'var(--success-light)';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.style.background = '';
+                }, 1500);
+            }).catch(function(err) {
+                console.error('Failed to copy: ', err);
+                alert('Command: ' + command);
+            });
+        }
+    </script>
+
+    <main>
+        <div class="container">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

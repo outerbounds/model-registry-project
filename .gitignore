@@ -1,0 +1,6 @@
+docs
+scripts/screenshots
+**/__pycache__
+.ob_apps
+project_spec.json
+src/crypto_anomaly_detection.egg-info

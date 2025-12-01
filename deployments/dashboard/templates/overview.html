@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+
+{% block title %}Overview{% endblock %}
+
+{% block content %}
+<h1>Project Overview</h1>
+
+<!-- Asset Status Cards -->
+<div class="grid grid-4 mb-2">
+    <div class="card">
+        <div class="stat">
+            <div class="stat-value">
+                {% if status.data and status.data.status == 'healthy' %}
+                    <span class="text-success">{{ status.data.samples }}</span>
+                {% else %}
+                    <span class="text-muted">-</span>
+                {% endif %}
+            </div>
+            <div class="stat-label">Latest Snapshot</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="stat">
+            <div class="stat-value" title="{{ status.model.version|format_version_tooltip if status.model else '' }}">
+                {% if status.model and status.model.status == 'healthy' %}
+                    {{ status.model.version|format_version }}
+                {% else %}
+                    <span class="text-muted">None</span>
+                {% endif %}
+            </div>
+            <div class="stat-label">Latest Model</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="stat">
+            <div class="stat-value" title="{{ status.champion.version|format_version_tooltip if status.champion and status.champion.status == 'available' else '' }}">
+                {% if status.champion and status.champion.status == 'available' %}
+                    <span class="text-success">{{ status.champion.version|format_version }}</span>
+                {% else %}
+                    <span class="text-muted">None</span>
+                {% endif %}
+            </div>
+            <div class="stat-label">Champion Model</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="stat">
+            <div class="stat-value">
+                {% if evaluation %}
+                    {% if evaluation.decision == 'approve' %}
+                        <span class="text-success">Approved</span>
+                    {% else %}
+                        <span class="text-danger">Rejected</span>
+                    {% endif %}
+                {% else %}
+                    <span class="text-muted">-</span>
+                {% endif %}
+            </div>
+            <div class="stat-label">Last Evaluation</div>
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-2">
+    <!-- Champion Model Card -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title">Champion Model</div>
+            {% if champion %}
+                <span class="badge badge-success">Active</span>
+            {% endif %}
+        </div>
+
+        {% if champion %}
+            <div class="metric">
+                <span class="metric-label">Version</span>
+                <span class="metric-value font-mono" title="{{ champion.version }}">{{ champion.version|format_version }}</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Algorithm</span>
+                <span class="metric-value">{{ champion.algorithm or 'Unknown' }}</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Training Samples</span>
+                <span class="metric-value">{{ champion.training_samples }}</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Anomaly Rate</span>
+                <span class="metric-value">{{ "%.1f"|format(champion.anomaly_rate * 100) }}%</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Silhouette Score</span>
+                <span class="metric-value">{{ "%.3f"|format(champion.silhouette_score) }}</span>
+            </div>
+        {% else %}
+            <div class="empty-state">
+                <div class="empty-state-icon">&#x1F3C6;</div>
+                <p>No champion model promoted yet</p>
+                <a href="/models?branch={{ branch }}" class="btn btn-primary mt-2">Go to Model Registry</a>
+            </div>
+        {% endif %}
+    </div>
+
+    <!-- Latest Evaluation Card -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title">Latest Evaluation</div>
+            {% if evaluation %}
+                {% if evaluation.decision == 'approve' %}
+                    <span class="badge badge-success">Approved</span>
+                {% else %}
+                    <span class="badge badge-danger">Rejected</span>
+                {% endif %}
+            {% endif %}
+        </div>
+
+        {% if evaluation %}
+            <div class="metric">
+                <span class="metric-label">Candidate Version</span>
+                <span class="metric-value font-mono" title="{{ evaluation.candidate_version }}">{{ evaluation.candidate_version|format_version }}</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Anomaly Rate</span>
+                <span class="metric-value">{{ "%.1f"|format(evaluation.anomaly_rate * 100) }}%</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Silhouette Score</span>
+                <span class="metric-value">{{ "%.3f"|format(evaluation.silhouette_score) }}</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Score Gap</span>
+                <span class="metric-value">{{ "%.3f"|format(evaluation.score_gap) }}</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Quality Gates</span>
+                <span class="metric-value">
+                    <span class="text-success">{{ evaluation.gates_passed }} passed</span>
+                    {% if evaluation.gates_failed > 0 %}
+                        / <span class="text-danger">{{ evaluation.gates_failed }} failed</span>
+                    {% endif %}
+                </span>
+            </div>
+        {% else %}
+            <div class="empty-state">
+                <div class="empty-state-icon">&#x1F4CA;</div>
+                <p>No evaluation results yet</p>
+                <p class="text-muted mt-1">Run the EvaluateFlow to see results</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Workflow Overview -->
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">Workflows</div>
+        <span class="text-muted" style="font-size: 0.875rem;">Independent Metaflow flows that produce and consume assets</span>
+    </div>
+    <div class="table-wrapper">
+    <table style="table-layout: auto;">
+        <thead>
+            <tr>
+                <th style="width: 160px;">Flow</th>
+                <th style="width: 80px;">Schedule</th>
+                <th style="width: 130px;">Produces</th>
+                <th style="width: 130px;">Consumes</th>
+                <th>Description</th>
+                <th style="width: 60px;">Run</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>IngestMarketFlow</strong></td>
+                <td><span class="badge badge-info">Hourly</span></td>
+                <td><code>market_snapshot</code></td>
+                <td>-</td>
+                <td class="wrap text-muted">Fetches live crypto data from CoinGecko API</td>
+                <td><button class="btn btn-sm btn-secondary" onclick="copyCommand('python flows/ingest/flow.py run')" title="Copy run command">Copy</button></td>
+            </tr>
+            <tr>
+                <td><strong>BuildDatasetFlow</strong></td>
+                <td><span class="badge badge-info">Daily</span></td>
+                <td><code>training_dataset</code><br><code>eval_holdout</code></td>
+                <td><code>market_snapshot</code></td>
+                <td class="wrap text-muted">Aggregates snapshots into train/eval splits</td>
+                <td><button class="btn btn-sm btn-secondary" onclick="copyCommand('python flows/build_dataset/flow.py run')" title="Copy run command">Copy</button></td>
+            </tr>
+            <tr>
+                <td><strong>TrainAnomalyFlow</strong></td>
+                <td><span class="badge badge-purple">Manual</span></td>
+                <td><code>anomaly_detector</code></td>
+                <td><code>training_dataset</code></td>
+                <td class="wrap text-muted">Trains Isolation Forest model, registers as candidate</td>
+                <td><button class="btn btn-sm btn-secondary" onclick="copyCommand('python flows/train/flow.py run')" title="Copy run command">Copy</button></td>
+            </tr>
+            <tr>
+                <td><strong>EvaluateFlow</strong></td>
+                <td><span class="badge badge-purple">Manual</span></td>
+                <td><em class="text-muted">updates model</em></td>
+                <td><code>anomaly_detector</code></td>
+                <td class="wrap text-muted">Runs quality gates, promotes candidate to evaluated status</td>
+                <td><button class="btn btn-sm btn-secondary" onclick="copyCommand('python flows/evaluate/flow.py run')" title="Copy run command">Copy</button></td>
+            </tr>
+            <tr>
+                <td><strong>PromoteFlow</strong></td>
+                <td><span class="badge badge-warning">Event</span></td>
+                <td>-</td>
+                <td><code>anomaly_detector</code></td>
+                <td class="wrap text-muted">Promotes evaluated model to champion status</td>
+                <td><button class="btn btn-sm btn-secondary" onclick="copyCommand('python flows/promote/flow.py run')" title="Copy run command">Copy</button></td>
+            </tr>
+        </tbody>
+    </table>
+    </div>
+    <div class="mt-1" style="padding: 0.75rem; background: var(--sand-100); border-radius: 0.5rem; font-size: 0.875rem;">
+        <strong>Run all flows in sequence:</strong>
+        <code style="display: block; margin-top: 0.5rem; padding: 0.5rem; background: var(--black); color: var(--gray-100); border-radius: 0.25rem; font-size: 0.8rem; overflow-x: auto; white-space: nowrap;">
+            python flows/ingest/flow.py run && python flows/build_dataset/flow.py run && python flows/train/flow.py run && python flows/evaluate/flow.py run && python flows/promote/flow.py run
+        </code>
+    </div>
+</div>
+
+<!-- Quality Gates Info -->
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">Quality Gates</div>
+    </div>
+    <div class="table-wrapper">
+    <table style="table-layout: auto;">
+        <thead>
+            <tr>
+                <th style="width: 160px;">Gate</th>
+                <th style="width: 140px;">Threshold</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Max Anomaly Rate</td>
+                <td><code>&le; 20%</code></td>
+                <td class="text-muted wrap">Catches models declaring too many anomalies</td>
+            </tr>
+            <tr>
+                <td>Min Anomaly Rate</td>
+                <td><code>&ge; 2%</code></td>
+                <td class="text-muted wrap">Catches underfitting or feature collapse</td>
+            </tr>
+            <tr>
+                <td>Rate Stability</td>
+                <td><code>&le; 10% drift</code></td>
+                <td class="text-muted wrap">Catches distribution drift from training</td>
+            </tr>
+            <tr>
+                <td>Separation Quality</td>
+                <td><code>silhouette &ge; 0.00</code></td>
+                <td class="text-muted wrap">Measures anomaly/normal cluster separation</td>
+            </tr>
+            <tr>
+                <td>Score Separation</td>
+                <td><code>gap &ge; 0.05</code></td>
+                <td class="text-muted wrap">Gap between anomaly and normal score means</td>
+            </tr>
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endblock %}
