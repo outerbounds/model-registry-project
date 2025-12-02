@@ -50,10 +50,10 @@
         <div class="stat">
             <div class="stat-value">
                 {% if evaluation %}
-                    {% if evaluation.decision == 'approve' %}
-                        <span class="text-success">Approved</span>
+                    {% if evaluation.passed %}
+                        <span class="text-success">Passed</span>
                     {% else %}
-                        <span class="text-danger">Rejected</span>
+                        <span class="text-danger">Failed</span>
                     {% endif %}
                 {% else %}
                     <span class="text-muted">-</span>
