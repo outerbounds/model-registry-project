@@ -48,6 +48,11 @@ class ModelRef:
     def data_source(self) -> Optional[str]:
         return self.annotations.get("data_source")
 
+    @property
+    def alias(self) -> Optional[str]:
+        """Alias is determined by Metaflow run tags, not stored in Asset."""
+        return None  # Use get_champion_run_id() to check if this is champion
+
 
 def _get_asset(prj_or_asset):
     """Get Asset from ProjectContext or return Asset directly."""
