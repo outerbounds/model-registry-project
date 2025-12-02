@@ -9,7 +9,6 @@ An end-to-end ML project demonstrating **model registry patterns** with Outerbou
 # Setup
 cd model-registry-project-v1
 export PYTHONPATH="$PWD"
-export METAFLOW_PROFILE=yellow  # or your profile
 
 # Train a model (fetches fresh data)
 python flows/train/flow.py run
