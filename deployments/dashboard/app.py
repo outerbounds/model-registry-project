@@ -217,23 +217,29 @@ def get_pipeline_status(asset: Asset, branch: str):
     return status
 
 
-def get_model_versions(asset: Asset, limit=20):
+def get_model_versions(asset: Asset, branch: str, limit=20):
     """Get list of model versions from Metaflow training runs.
 
     Uses Metaflow Client API to fetch run artifacts directly.
     This provides complete version history with all training metadata.
+
+    Args:
+        asset: Asset client (for fallback)
+        branch: Project branch to filter runs by (e.g., 'test.feature_prediction')
+        limit: Maximum number of versions to return
     """
     from metaflow import Flow
 
     versions = []
 
-    # Look up champion by alias tag
-    current_champion_run = get_champion_run_id()
+    # Look up champion by alias tag (scoped to this branch)
+    current_champion_run = get_champion_run_id(branch=branch)
 
-    # Get version history from Metaflow runs
+    # Get version history from Metaflow runs, filtered by project_branch tag
     try:
         flow = Flow('TrainDetectorFlow')
-        for i, run in enumerate(flow.runs()):
+        branch_tag = f"project_branch:{branch}"
+        for i, run in enumerate(flow.runs(branch_tag)):
             if i >= limit:
                 break
 
@@ -450,16 +456,37 @@ def get_model_details(run_id: str, alias: str = None):
         return None
 
 
-def get_champion_run_id() -> str:
+def get_champion_run_id(branch: str = None) -> str:
     """Get the training run ID of the current champion model.
 
-    Uses Metaflow's native tagging to find the run tagged 'champion'.
+    Uses Metaflow's native tagging to find the run tagged 'champion',
+    optionally scoped to a specific project branch.
+
+    Args:
+        branch: Project branch to filter by (e.g., 'test.feature_prediction').
+                If None, returns champion across all branches.
 
     Returns the run ID string, or None if no champion exists.
     """
-    from src import registry
+    from metaflow import Flow
 
-    return registry.get_champion_run_id(flow_name="TrainDetectorFlow")
+    try:
+        flow = Flow("TrainDetectorFlow")
+        # Build tag filter: always require 'champion', optionally filter by branch
+        if branch:
+            # Find champion within this branch
+            branch_tag = f"project_branch:{branch}"
+            for run in flow.runs(branch_tag):
+                if "champion" in run.tags:
+                    return run.id
+        else:
+            # Find champion across all branches
+            for run in flow.runs("champion"):
+                return run.id
+    except Exception:
+        pass
+
+    return None
 
 
 # =============================================================================
@@ -554,17 +581,17 @@ async def model_registry(request: Request):
     branch = get_branch_from_request(request)
     asset = get_asset_client(branch)
 
-    # Get versions with error handling
+    # Get versions with error handling (filtered by branch)
     versions = []
     error_message = None
     try:
-        versions = get_model_versions(asset, limit=20)
+        versions = get_model_versions(asset, branch=branch, limit=20)
     except Exception as e:
         error_message = f"Failed to load model versions: {str(e)}"
         print(f"[ERROR] {error_message}")
 
-    # Get champion details with full lineage
-    champion_run_id = get_champion_run_id()
+    # Get champion details with full lineage (scoped to branch)
+    champion_run_id = get_champion_run_id(branch=branch)
     champion = get_model_details(champion_run_id, alias="champion") if champion_run_id else None
 
     # Count champions to validate uniqueness
