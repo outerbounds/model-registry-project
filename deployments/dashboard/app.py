@@ -771,6 +771,8 @@ async def card_by_run(flow_alias: str, run_id: str):
 async def cards_page(request: Request):
     """
     Cards overview page - list available cards with iframe previews.
+    Supports both cross-flow comparison (latest of each flow) and
+    intra-flow comparison (multiple runs of same flow).
     """
     from metaflow import Flow, namespace
 
@@ -780,29 +782,45 @@ async def cards_page(request: Request):
     namespace(f"project:{PROJECT}")
 
     # Get recent runs with cards for each flow, filtered by branch
-    cards_info = []
+    # Collect up to MAX_RUNS_PER_FLOW for intra-flow comparison
+    MAX_RUNS_PER_FLOW = 5
+    cards_info = []  # Latest run per flow (for display cards)
+    flow_runs = {}   # All recent runs per flow (for intra-flow comparison)
     branch_tag = f"project_branch:{branch}"
 
     for alias, flow_name in FLOW_NAME_MAP.items():
         try:
             flow = Flow(flow_name)
-            # Find latest successful run for this branch
-            run = None
+            # Collect recent successful runs for this branch
+            runs_for_flow = []
             for r in flow.runs(branch_tag):
                 if r.successful:
-                    run = r
-                    break
+                    run_info = {
+                        "run_id": r.id,
+                        "created_at": r.created_at.isoformat() if r.created_at else None,
+                        "url": f"/cards/{alias}/{r.id}?branch={branch}",
+                    }
+                    runs_for_flow.append(run_info)
+                    if len(runs_for_flow) >= MAX_RUNS_PER_FLOW:
+                        break
 
-            if run:
-                # Get detailed card info for this run
-                step_cards = get_flow_cards_info(flow_name, run.id)
+            if runs_for_flow:
+                # Store all runs for this flow
+                flow_runs[alias] = {
+                    "flow_name": flow_name,
+                    "runs": runs_for_flow,
+                }
+
+                # Use latest run for the display card
+                latest = runs_for_flow[0]
+                step_cards = get_flow_cards_info(flow_name, latest["run_id"])
                 cards_info.append({
                     "alias": alias,
                     "flow_name": flow_name,
-                    "run_id": run.id,
-                    "created_at": run.created_at.isoformat() if run.created_at else None,
-                    "url": f"/cards/{alias}/{run.id}?branch={branch}",
-                    "step_cards": step_cards,  # List of {step_name, card_index}
+                    "run_id": latest["run_id"],
+                    "created_at": latest["created_at"],
+                    "url": latest["url"],
+                    "step_cards": step_cards,
                     "card_count": len(step_cards),
                 })
         except Exception as e:
@@ -812,6 +830,7 @@ async def cards_page(request: Request):
     return templates.TemplateResponse("cards.html", get_template_context(
         request, branch,
         cards=cards_info,
+        flow_runs=flow_runs,  # For intra-flow comparison dropdowns
     ))
 
 

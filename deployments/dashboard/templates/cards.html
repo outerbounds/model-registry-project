@@ -15,7 +15,20 @@
         <span class="card-title">Compare Cards</span>
     </div>
     {% if cards %}
-    <div class="flex gap-2 items-center" style="flex-wrap: wrap;">
+    <!-- Comparison mode toggle -->
+    <div class="mb-2">
+        <label style="margin-right: 1rem;">
+            <input type="radio" name="compare-mode" value="cross-flow" checked onchange="updateCompareMode()">
+            Cross-flow <span class="text-muted" style="font-size: 0.8rem;">(compare different flows)</span>
+        </label>
+        <label>
+            <input type="radio" name="compare-mode" value="intra-flow" onchange="updateCompareMode()">
+            Intra-flow <span class="text-muted" style="font-size: 0.8rem;">(compare runs of same flow)</span>
+        </label>
+    </div>
+
+    <!-- Cross-flow comparison (original) -->
+    <div id="cross-flow-controls" class="flex gap-2 items-center" style="flex-wrap: wrap;">
         <div>
             <label for="card-left">Left Card</label>
             <select id="card-left" style="min-width: 200px;">
@@ -36,8 +49,33 @@
             <button class="btn btn-primary" onclick="showSideBySide()">Compare Side-by-Side</button>
         </div>
     </div>
+
+    <!-- Intra-flow comparison (new) -->
+    <div id="intra-flow-controls" class="flex gap-2 items-center" style="flex-wrap: wrap; display: none;">
+        <div>
+            <label for="intra-flow-select">Flow</label>
+            <select id="intra-flow-select" style="min-width: 180px;" onchange="updateIntraFlowVersions()">
+                {% for alias, flow_data in flow_runs.items() %}
+                <option value="{{ alias }}" data-flow-name="{{ flow_data.flow_name }}">{{ flow_data.flow_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label for="intra-left">Left (newer)</label>
+            <select id="intra-left" style="min-width: 220px;"></select>
+        </div>
+        <div>
+            <label for="intra-right">Right (older)</label>
+            <select id="intra-right" style="min-width: 220px;"></select>
+        </div>
+        <div style="padding-top: 1.5rem;">
+            <button class="btn btn-primary" onclick="showIntraFlowComparison()">Compare Versions</button>
+        </div>
+    </div>
+
     <p class="text-muted mt-2" style="font-size: 0.8rem;">
-        Compare training cards across runs to see how score distributions, anomaly rates, and detected coins change over time.
+        <strong>Cross-flow:</strong> Compare cards from different flows (e.g., Train vs Evaluate).<br>
+        <strong>Intra-flow:</strong> Compare runs of the same flow over time (e.g., latest vs latest-1 training runs).
     </p>
     {% else %}
     <div class="text-muted">
@@ -118,6 +156,9 @@
 </div>
 
 <script>
+// Flow runs data from server (for intra-flow comparison)
+const flowRunsData = {{ flow_runs | tojson | safe }};
+
 function showCardPreview(url, title) {
     document.getElementById('modal-title').textContent = title;
     document.getElementById('card-iframe').src = url;
@@ -144,6 +185,75 @@ function closeCompareModal() {
     document.getElementById('compare-right').src = '';
 }
 
+// Toggle between cross-flow and intra-flow comparison modes
+function updateCompareMode() {
+    const mode = document.querySelector('input[name="compare-mode"]:checked').value;
+    document.getElementById('cross-flow-controls').style.display = mode === 'cross-flow' ? 'flex' : 'none';
+    document.getElementById('intra-flow-controls').style.display = mode === 'intra-flow' ? 'flex' : 'none';
+
+    if (mode === 'intra-flow') {
+        updateIntraFlowVersions();
+    }
+}
+
+// Update version dropdowns when flow selection changes
+function updateIntraFlowVersions() {
+    const flowSelect = document.getElementById('intra-flow-select');
+    const alias = flowSelect.value;
+    const flowData = flowRunsData[alias];
+
+    if (!flowData || !flowData.runs || flowData.runs.length === 0) {
+        document.getElementById('intra-left').innerHTML = '<option value="">No runs available</option>';
+        document.getElementById('intra-right').innerHTML = '<option value="">No runs available</option>';
+        return;
+    }
+
+    const runs = flowData.runs;
+
+    // Format run ID for display (truncate if needed)
+    function formatRunId(runId) {
+        if (runId.length > 25) {
+            return runId.substring(0, 25) + '...';
+        }
+        return runId;
+    }
+
+    // Format timestamp for display
+    function formatTimestamp(isoStr) {
+        if (!isoStr) return '';
+        const d = new Date(isoStr);
+        return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    }
+
+    // Build options with run info
+    let leftOptions = '';
+    let rightOptions = '';
+
+    runs.forEach((run, idx) => {
+        const label = `${formatRunId(run.run_id)} (${formatTimestamp(run.created_at)})`;
+        leftOptions += `<option value="${run.url}" ${idx === 0 ? 'selected' : ''}>${label}</option>`;
+        rightOptions += `<option value="${run.url}" ${idx === 1 ? 'selected' : ''}>${label}</option>`;
+    });
+
+    document.getElementById('intra-left').innerHTML = leftOptions;
+    document.getElementById('intra-right').innerHTML = rightOptions;
+}
+
+// Show intra-flow comparison
+function showIntraFlowComparison() {
+    const leftUrl = document.getElementById('intra-left').value;
+    const rightUrl = document.getElementById('intra-right').value;
+
+    if (!leftUrl || !rightUrl) {
+        alert('Please select two runs to compare');
+        return;
+    }
+
+    document.getElementById('compare-left').src = leftUrl;
+    document.getElementById('compare-right').src = rightUrl;
+    document.getElementById('compare-modal').style.display = 'block';
+}
+
 // Close modals on escape
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
@@ -158,6 +268,13 @@ document.getElementById('card-modal').addEventListener('click', function(e) {
 });
 document.getElementById('compare-modal').addEventListener('click', function(e) {
     if (e.target === this) closeCompareModal();
+});
+
+// Initialize intra-flow versions on page load
+document.addEventListener('DOMContentLoaded', function() {
+    if (Object.keys(flowRunsData).length > 0) {
+        updateIntraFlowVersions();
+    }
 });
 </script>
 
