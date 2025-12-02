@@ -228,12 +228,16 @@ def get_model_versions(asset: Asset, branch: str, limit=20):
         branch: Project branch to filter runs by (e.g., 'test.feature_prediction')
         limit: Maximum number of versions to return
     """
-    from metaflow import Flow
+    from metaflow import Flow, namespace
 
     versions = []
 
     # Look up champion by alias tag (scoped to this branch)
     current_champion_run = get_champion_run_id(branch=branch)
+
+    # Set project namespace to see all runs (dev + argo) for this project,
+    # then filter by project_branch tag to get branch-specific runs
+    namespace(f"project:{PROJECT}")
 
     # Get version history from Metaflow runs, filtered by project_branch tag
     try:
@@ -468,10 +472,13 @@ def get_champion_run_id(branch: str = None) -> str:
 
     Returns the run ID string, or None if no champion exists.
     """
-    from metaflow import Flow
+    from metaflow import Flow, namespace
 
     try:
+        # Set project namespace to see all runs (dev + argo)
+        namespace(f"project:{PROJECT}")
         flow = Flow("TrainDetectorFlow")
+
         # Build tag filter: always require 'champion', optionally filter by branch
         if branch:
             # Find champion within this branch
