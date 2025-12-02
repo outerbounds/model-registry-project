@@ -195,14 +195,15 @@ def get_pipeline_status(asset: Asset, branch: str):
     except Exception:
         status["data"] = {"status": "no_data"}
 
-    # Check champion (latest-1)
-    try:
-        ref = registry.load_model(asset, "anomaly_detector", instance="latest-1")
+    # Check champion via Metaflow run tags
+    champion_run_id = get_champion_run_id(branch=branch)
+    if champion_run_id:
         status["champion"] = {
             "status": "available",
-            "version": ref.version,
+            "version": f"Train/{champion_run_id}",
+            "run_id": champion_run_id,
         }
-    except Exception:
+    else:
         status["champion"] = {"status": "none"}
 
     # Overall
@@ -525,21 +526,37 @@ async def overview(request: Request):
     status = get_pipeline_status(asset, branch)
     evaluation = get_latest_evaluation(asset)
 
-    # Get champion details (latest-1)
+    # Get champion details via Metaflow run tags (same as Models page)
     champion_details = None
-    try:
-        from src import registry
-        ref = registry.load_model(asset, "anomaly_detector", instance="latest-1")
-        ann = ref.annotations
-        champion_details = {
-            "version": ref.version,
-            "algorithm": ann.get("algorithm"),
-            "anomaly_rate": _float(ann.get("anomaly_rate")),
-            "training_samples": _int(ann.get("training_samples")),
-            "silhouette_score": _float(ann.get("silhouette_score")),
-        }
-    except Exception:
-        pass
+    champion_run_id = get_champion_run_id(branch=branch)
+    if champion_run_id:
+        try:
+            from metaflow import Flow, namespace
+            namespace(f"project:{PROJECT}")
+            flow = Flow("TrainDetectorFlow")
+            run = flow[champion_run_id]
+
+            # Get model details from the train step
+            train_step = run['train']
+            for task in train_step:
+                config = dict(task.data.model_config)
+                prediction = task.data.prediction
+                feature_set = task.data.feature_set
+                hp = config.get('hyperparameters', {})
+
+                champion_details = {
+                    "version": f"Train/{champion_run_id}",
+                    "run_id": champion_run_id,
+                    "algorithm": config.get("algorithm", "isolation_forest"),
+                    "anomaly_rate": _float(prediction.anomaly_rate) if hasattr(prediction, 'anomaly_rate') else None,
+                    "training_samples": _int(feature_set.n_samples) if hasattr(feature_set, 'n_samples') else None,
+                    "silhouette_score": None,  # Computed in evaluate flow, not available here
+                    "n_estimators": _int(hp.get("n_estimators")),
+                    "contamination": _float(hp.get("contamination")),
+                }
+                break
+        except Exception as e:
+            print(f"[DEBUG] Failed to load champion run {champion_run_id}: {e}")
 
     return templates.TemplateResponse("overview.html", get_template_context(
         request, branch,
