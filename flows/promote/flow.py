@@ -61,7 +61,7 @@ class PromoteModelFlow(ProjectFlow):
         # Load the model to verify it exists
         # Handle different version formats:
         # - "latest", "latest-N" -> pass directly to Asset API
-        # - bare run ID like "186088" -> load via Metaflow Client API
+        # - run ID (numeric like "186088" or argo-style like "argo-foo-bar") -> load via Metaflow Client API
         # - full version pathspec -> pass directly to Asset API
         try:
             if self.version.startswith("latest"):
@@ -71,9 +71,12 @@ class PromoteModelFlow(ProjectFlow):
                     self.model_name,
                     version=self.version
                 )
-            elif self.version.isdigit() or len(self.version) < 20:
-                # Looks like a bare run ID - load via Metaflow Client API
+            elif self.version.isdigit() or self.version.startswith("argo-"):
+                # Looks like a run ID (numeric or argo-style) - load via Metaflow Client API
                 print(f"Loading model from TrainDetectorFlow run: {self.version}")
+                from metaflow import namespace
+                # Use project namespace to see all runs (dev + argo)
+                namespace(f"project:{self.prj.project}")
                 flow = Flow('TrainDetectorFlow')
                 run = flow[self.version]
 
@@ -147,6 +150,7 @@ class PromoteModelFlow(ProjectFlow):
             previous = registry.set_champion_run(
                 run_id=self.model.training_run_id,
                 flow_name="TrainDetectorFlow",
+                project=self.prj.project,
             )
 
             self.promotion_success = True

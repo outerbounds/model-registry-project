@@ -353,6 +353,7 @@ def get_champion_run_id(flow_name: str = "TrainDetectorFlow") -> Optional[str]:
 def set_champion_run(
     run_id: str,
     flow_name: str = "TrainDetectorFlow",
+    project: str = "crypto_anomaly",
 ) -> Optional[str]:
     """
     Set a training run as the champion by tagging it.
@@ -362,11 +363,15 @@ def set_champion_run(
     Args:
         run_id: The run ID to promote
         flow_name: The training flow name
+        project: Project name for namespace scoping
 
     Returns:
         The previous champion's run ID, or None if no previous champion
     """
-    from metaflow import Flow, Run
+    from metaflow import Flow, Run, namespace
+
+    # Use project namespace to see all runs (dev + argo)
+    namespace(f"project:{project}")
 
     previous_champion = None
 
