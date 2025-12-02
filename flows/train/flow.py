@@ -72,6 +72,8 @@ class TrainDetectorFlow(ProjectFlow):
         snapshot = data.fetch_market_data(num_coins=num_coins)
         self.feature_set = data.extract_features(snapshot)
         self.data_source = "coingecko_live"
+        self.data_snapshot_range = None
+        self.data_snapshot_count = None
 
         print(f"Fetched {self.feature_set.n_samples} coins")
 
@@ -90,9 +92,16 @@ class TrainDetectorFlow(ProjectFlow):
 
         # Convert to FeatureSet
         self.feature_set = table_to_feature_set(table, FEATURE_COLS)
-        self.data_source = f"{asset_name}:{version}"
+
+        # Capture the actual resolved version from metadata (not the alias)
+        # This traces back to BuildDatasetFlow run that created this dataset
+        resolved_version = metadata.builder_run_id
+        self.data_source = f"{asset_name}:v{resolved_version}"
+        self.data_snapshot_range = metadata.snapshot_range
+        self.data_snapshot_count = metadata.snapshot_count
 
         print(f"Loaded {self.feature_set.n_samples} samples from {metadata.snapshot_count} snapshots")
+        print(f"Resolved dataset version: BuildDatasetFlow/{resolved_version}")
         print(f"Snapshot range: {metadata.snapshot_range[0][:19]} to {metadata.snapshot_range[1][:19]}")
 
     @card
@@ -117,6 +126,8 @@ class TrainDetectorFlow(ProjectFlow):
                     # Load single snapshot artifact (backwards compatible)
                     self.feature_set = self.prj.get_data(data_asset, instance=data_version)
                     self.data_source = f"{data_asset}:{data_version}"
+                    self.data_snapshot_range = (self.feature_set.timestamp, self.feature_set.timestamp)
+                    self.data_snapshot_count = 1
                     print(f"Loaded FeatureSet: {self.feature_set.n_samples} samples x {self.feature_set.n_features} features")
                     print(f"Timestamp: {self.feature_set.timestamp}")
             except Exception as e:
@@ -182,15 +193,17 @@ class TrainDetectorFlow(ProjectFlow):
 
     @step
     def register(self):
-        """Register trained model as candidate."""
+        """Register trained model and log predictions."""
         from src import registry
+        from src.predictions import PredictionRecord, PredictionStore
         from metaflow import current
+        from datetime import datetime, timezone
 
         annotations = {
             "algorithm": self.trained_model.algorithm,
             **self.trained_model.hyperparameters,
             "n_features": self.feature_set.n_features,
-            "feature_names": ",".join(self.feature_set.feature_names),
+            "feature_names": ",".join(self.feature_set.feature_names[:20]),  # Limit to avoid overflow
             "training_samples": self.feature_set.n_samples,
             "anomalies_detected": self.prediction.n_anomalies,
             "anomaly_rate": float(self.prediction.anomaly_rate),
@@ -200,18 +213,48 @@ class TrainDetectorFlow(ProjectFlow):
             "data_source": self.data_source,
         }
 
+        # Add data snapshot lineage if available
+        if self.data_snapshot_range:
+            annotations["data_snapshot_start"] = self.data_snapshot_range[0]
+            annotations["data_snapshot_end"] = self.data_snapshot_range[1]
+        if self.data_snapshot_count:
+            annotations["data_snapshot_count"] = self.data_snapshot_count
+
         registry.register_model(
             self.prj,
             "anomaly_detector",
-            status=registry.ModelStatus.CANDIDATE,
             annotations=annotations,
             description=f"Anomaly detector: {self.prediction.anomaly_rate:.1%} rate on {self.feature_set.n_samples} coins",
         )
 
-        print(f"\nRegistered anomaly_detector as CANDIDATE")
+        print(f"\nRegistered anomaly_detector (new version)")
         print(f"  Algorithm: {self.trained_model.algorithm}")
         print(f"  Data: {self.data_source}")
         print(f"  Run ID: {current.run_id}")
+
+        # Log predictions for outcome validation
+        prediction_timestamp = datetime.now(timezone.utc).isoformat()
+        model_version = f"{current.flow_name}/{current.run_id}"
+
+        predictions = []
+        for i, (score, label) in enumerate(zip(self.prediction.anomaly_scores, self.prediction.predictions)):
+            coin_info = self.feature_set.coin_info[i]
+            predictions.append(PredictionRecord(
+                coin_id=coin_info.get('coin_id', f'unknown_{i}'),
+                symbol=coin_info.get('symbol', 'UNK'),
+                prediction_timestamp=prediction_timestamp,
+                current_price=float(coin_info.get('current_price', 0)),
+                anomaly_score=float(score),
+                is_anomaly=(label == -1),  # -1 = anomaly in isolation forest
+                model_version=model_version,
+                flow_run_id=current.run_id,
+            ))
+
+        # Store predictions
+        store = PredictionStore(self.prj.project, self.prj.branch)
+        pred_path = store.log_predictions(predictions, current.flow_name, current.run_id)
+        print(f"\nLogged {len(predictions)} predictions for outcome validation")
+        print(f"  Path: {pred_path}")
 
         self.next(self.end)
 
@@ -221,7 +264,7 @@ class TrainDetectorFlow(ProjectFlow):
         print(f"\n{'='*50}")
         print("Training Complete")
         print(f"{'='*50}")
-        print(f"Model: anomaly_detector (status: candidate)")
+        print(f"Model: anomaly_detector")
         print(f"Algorithm: {self.trained_model.algorithm}")
         print(f"Data source: {self.data_source}")
         print(f"Anomaly rate: {self.prediction.anomaly_rate:.1%}")

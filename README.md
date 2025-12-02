@@ -1,311 +1,217 @@
-# Crypto Market Anomaly Detection
+<img style="display: block; max-width: 100%; height: auto; margin: auto;" alt="system" src="https://github.com/user-attachments/assets/6b4ed419-bc10-482e-9969-3dcf236f0e37" />
 
-Real-time anomaly detection on live cryptocurrency market data from CoinGecko.
 
-## Model Lifecycle
+An end-to-end ML project demonstrating **model registry patterns** with Outerbounds Projects. Detects anomalies in live cryptocurrency market data from CoinGecko.
 
-This project uses the **champion/challenger** pattern for model lifecycle:
+## Quick Start
 
-| Status | Meaning | How it's set |
-|--------|---------|--------------|
-| `candidate` | Newly trained, not yet evaluated | TrainDetectorFlow |
-| `evaluated` | Passed point-in-time quality gates | EvaluateDetectorFlow |
-| `challenger` | Running in parallel with champion | Deployment config |
-| `champion` | Primary model, blessed for serving | PromoteDetectorFlow |
-| `retired` | Previous champion, replaced | (when new champion is promoted) |
+```bash
+# Setup
+cd model-registry-project-v1
+export PYTHONPATH="$PWD"
+export METAFLOW_PROFILE=yellow  # or your profile
 
-The idea that will become important is to view these states as ML Asset quality designations, and not confuse such status tags with deployment environments.
-- A `champion` model can be deployed to dev, staging, OR prod
-- Deployment configs can then reference models by alias (`champion`) or version (`v5`)
-- The intent is clean separation of "is this model performant enough to serve production traffic?" from "which code/project branch is this model on?"
+# Train a model (fetches fresh data)
+python flows/train/flow.py run
 
-### Evaluated vs Challenger
+# Evaluate the model
+python flows/evaluate/flow.py run
 
-The distinction matters:
-
-- **`evaluated`**: Point-in-time assessment. A single evaluation run passed quality gates. This is necessary but may not be sufficient in most real-world systems.
-- **`challenger`**: Trial period. The model runs in parallel with the champion over time, allowing comparison of Evals.log streams. This applies to BOTH:
-  - **Batch workflows**: Parallel daily/hourly runs with different model refs
-  - **API deployments**: Traffic split between deployment variants
-
+# Promote to champion
+python flows/promote/flow.py run --run_id <TRAIN_RUN_ID>
 ```
-candidate ──► evaluated ──► challenger ──► champion
-                │               │
-          Point-in-time    Trial period
-          (single run)     (parallel runs)
-```
+
 ## Project Structure
 
 ```
-├── src/                   # Core operational logic (reusable)
-│   ├── data.py            # Data fetching, feature engineering
-│   ├── model.py           # Model training, inference
-│   ├── registry.py        # Asset registration, versioning
-│   └── eval.py            # Evaluation, quality gates
+├── src/                        # Reusable ML logic
+│   ├── data.py                 # Data fetching from CoinGecko
+│   ├── features.py             # Feature engineering
+│   ├── model.py                # Isolation Forest training/inference
+│   ├── registry.py             # Asset registration, champion management
+│   └── eval.py                 # Evaluation metrics, quality gates
 │
-├── flows/                 # Thin orchestration layers
-│   ├── ingest/flow.py     # Orchestrates: fetch → extract → register DataAsset
-│   ├── train/flow.py      # Orchestrates: load data → train → register ModelAsset
-│   ├── evaluate/flow.py   # Orchestrates: load → predict → gates → update
-│   └── promote/flow.py    # Orchestrates: load → promote → publish
+├── flows/                      # Metaflow orchestration
+│   ├── ingest/flow.py          # Fetch → register DataAsset
+│   ├── build_dataset/flow.py   # Accumulate snapshots → train/eval split
+│   ├── train/flow.py           # Train → register ModelAsset
+│   ├── evaluate/flow.py        # Evaluate → quality gates
+│   ├── promote/flow.py         # Promote → champion tag
+│   └── validate_outcomes/      # Production validation
 │
 ├── deployments/
-│   └── api/app.py         # FastAPI service (uses src modules)
+│   └── dashboard/              # FastAPI dashboard for monitoring
 │
-├── data/                   # DataAsset configs
-│   └── market_snapshot/
-└── models/                 # ModelAsset configs
-    └── anomaly_detector/
-```
-
-### Why `/src` at project root?
-
-Separating operational logic from orchestration enables:
-
-1. **Dependency injection** - Config files can specify which code paths to use
-2. **Dynamic loading** - Different asset states trigger different behaviors
-3. **Testability** - Test workflows independently of flow orchestration
-4. **Reusability** - Same logic in flows, API, and notebooks
-
-```python
-# In a flow
-from src import data, model, registry
-snapshot = data.fetch_market_data()
-feature_set = data.extract_features(snapshot)
-trained, result = model.train(feature_set)
-registry.register_model(prj, "anomaly_detector", ...)
-
-# In API
-from src import data, model
-snapshot = data.fetch_market_data()
-prediction = model.predict_fresh(config, data.extract_features(snapshot))
-
-# In notebook
-from src import data
-snapshot = data.fetch_market_data()
-data.get_top_movers(snapshot)
-```
-
-## ML Lifecycle
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         ML LIFECYCLE                             │
-│                                                                  │
-│   TrainFlow ──────► EvaluateFlow ──────► PromoteFlow            │
-│       │                  │                    │                  │
-│       ▼                  ▼                    ▼                  │
-│   candidate          evaluated            champion              │
-│   (new model)     (gates passed)       (blessed for            │
-│                                          serving)               │
-│                                                                  │
-│   Optional: Deploy as 'challenger' for trial period             │
-│   before promoting to champion                                   │
-└─────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────┐
-│                    DEPLOYMENT CONFIGS                            │
-│                    (in git branches)                             │
-│                                                                  │
-│   git:main     →  model_ref: "anomaly_detector:latest"          │
-│   git:staging  →  model_ref: "anomaly_detector:champion"        │
-│   git:prod     →  model_ref: "anomaly_detector:v5"  (pinned)    │
-└─────────────────────────────────────────────────────────────────┘
+├── configs/                    # Environment-specific configs
+│   ├── model.json
+│   ├── training.json
+│   └── evaluation.json
+│
+└── obproject.toml              # Project configuration
 ```
 
 ## Flows
 
 ### IngestMarketDataFlow
 
-Fetches live data, registers versioned `market_snapshot` DataAsset:
+Fetches live crypto prices and registers a `market_snapshot` DataAsset.
 
 ```bash
 python flows/ingest/flow.py run
-python flows/ingest/flow.py run --num_coins 200
 ```
+
+### BuildDatasetFlow
+
+Accumulates snapshots into train/eval datasets with time-based splits.
+
+```bash
+# Default: 96hr history, 7hr holdout
+python flows/build_dataset/flow.py run
+
+# Quick test (smaller holdout)
+python flows/build_dataset/flow.py run --holdout_hours 1
+```
+
+**Trigger Form Parameters:**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `holdout_hours` | `7` | Hours of recent data reserved for evaluation holdout |
+| `max_history_hours` | `96` | Maximum history window to include |
+| `min_snapshots_per_coin` | `3` | Minimum snapshots required per coin (filters incomplete data) |
+| `add_targets` | `false` | Add target columns for supervised learning |
 
 ### TrainDetectorFlow
 
-Trains model, registers as `candidate`. Can use registered data or fetch fresh:
+Trains an Isolation Forest model and registers it as a ModelAsset.
 
 ```bash
-# Quick testing (fetch fresh data)
-python flows/train/flow.py run --contamination 0.10
+# Use accumulated dataset
+python flows/train/flow.py run
 
-# Production (use registered data asset for lineage)
-python flows/train/flow.py run --data_version latest
+# Quick test with fresh data (no dataset lineage)
+python flows/train/flow.py run --fresh_data
 ```
 
 ### EvaluateDetectorFlow
 
-Evaluates candidate, applies quality gates, updates status to `evaluated`:
+Evaluates a model against quality gates using the holdout dataset.
 
 ```bash
-python flows/evaluate/flow.py run --max_anomaly_rate 0.20
+# Default: evaluate latest model on holdout set
+python flows/evaluate/flow.py run
+
+# Use fresh data instead of holdout
+python flows/evaluate/flow.py run --eval_data_source fresh
+
+# Evaluate specific model version
+python flows/evaluate/flow.py run --candidate_version v5
 ```
 
-### PromoteDetectorFlow
+**Trigger Form Parameters:**
 
-Promotes model to `champion` status:
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `candidate_version` | `latest` | Model to evaluate. Use `latest`, `latest-N`, or version ID |
+| `compare_to` | `latest-1` | Model to compare against. Use `none` to skip comparison |
+| `eval_data_source` | *(empty)* | Leave empty for `eval_holdout` (from config). Set `fresh` for live data |
+| `eval_data_version` | *(empty)* | Leave empty for `latest` (from config). Set `latest-1` for previous holdout |
+
+Empty fields use defaults from `configs/evaluation.json`. Parameters override config at runtime.
+
+**Version specifiers:** `latest`, `latest-1`, `latest-2`, etc. resolve to actual version IDs at runtime.
+
+### PromoteModelFlow
+
+Promotes a model to champion using Metaflow run tags.
 
 ```bash
+# Promote by training run ID
+python flows/promote/flow.py run --version 186362
+
+# Promote latest model
 python flows/promote/flow.py run --version latest
 ```
 
-## API
+**Trigger Form Parameters:**
 
-The API tries to load `champion` first, falls back to `latest`:
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `version` | *(required)* | Training run ID to promote (e.g., `186362`) or `latest` |
+| `alias` | `champion` | Tag to apply (typically `champion`) |
+| `model_name` | `anomaly_detector` | Model asset name |
 
-| Endpoint | Description |
-|----------|-------------|
-| `POST /scan` | Scan market for anomalies |
-| `GET /anomalies` | Get detected anomalies |
-| `GET /market` | Market overview |
-| `GET /model/info` | Model info (status: candidate/evaluated/champion) |
-| `POST /model/reload` | Hot-reload model |
-| `GET /versions` | List all versions |
+## Model Lifecycle
+
+```
+TrainFlow ──────► EvaluateFlow ──────► PromoteFlow
+    │                  │                    │
+    ▼                  ▼                    ▼
+candidate          evaluated            champion
+(new model)     (gates passed)    (tagged for serving)
+```
+
+### Champion Management
+
+Champions are tracked via **Metaflow run tags**, not Asset API tags:
+
+```python
+from metaflow import Flow, Run
+
+# Find current champion
+for run in Flow("TrainDetectorFlow").runs("champion"):
+    print(f"Champion: {run.id}")
+    break
+
+# Promote a new champion
+Run(f"TrainDetectorFlow/{run_id}").add_tag("champion")
+```
+
+This enables efficient server-side queries to find the current champion model.
+
+## Configuration
+
+### obproject.toml
+
+```toml
+project = "crypto_anomaly"
+title = "Crypto Market Anomaly Detection"
+
+# Map branches to environments
+[branch_to_environment]
+"main" = "production"
+"*" = "dev"
+
+# Environment-specific configs
+[environments.production.flow_configs]
+model_config = "configs/model.json"
+training_config = "configs/training.json"
+```
+
+### Local Development
+
+For local testing, read and write use your user branch. For production-like behavior (read from main, write to your branch):
+
+```toml
+[dev-assets]
+branch = "main"
+```
+
+## Deployment
+
+### Deploy Flows to Argo
+
+```bash
+python flows/ingest/flow.py argo-workflows create
+python flows/train/flow.py argo-workflows create
+python flows/evaluate/flow.py argo-workflows create
+python flows/promote/flow.py argo-workflows create
+```
+
+### Dashboard
+
+The FastAPI dashboard in `deployments/dashboard/` displays model performance and anomaly predictions.
 
 ## Data Source
 
-**CoinGecko API** - Free, no API key, updates every few minutes.
-
-## Scheduling & Event Triggering
-
-When deployed to Argo Workflows, flows trigger automatically:
-
-```
-@schedule(hourly)          @trigger_on_finish         @trigger_on_finish
-      │                           │                          │
-      ▼                           ▼                          ▼
- IngestFlow ──────────────► TrainFlow ──────────────► EvaluateFlow
-                                                            │
-                                               publish_event("approval_requested")
-                                                            │
-                                                     [HUMAN REVIEW]
-                                                            │
-                                              @project_trigger("model_approved")
-                                                            ▼
-                                                      PromoteFlow
-```
-
-### Deploy to Argo
-
-```bash
-# Deploy all flows (one-time)
-python flows/ingest/flow.py --with retry argo-workflows create
-python flows/train/flow.py --with retry argo-workflows create
-python flows/evaluate/flow.py --with retry argo-workflows create
-python flows/promote/flow.py --with retry argo-workflows create
-```
-
-### Trigger Promotion (after human review)
-
-```bash
-python -c "from obproject.project_events import ProjectEvent; \
-    ProjectEvent('model_approved', 'crypto_anomaly', 'main').publish()"
-```
-
-### Making Promotion Fully Automated
-
-To skip human approval, edit `flows/promote/flow.py`:
-
-```python
-# Replace:
-@project_trigger(event="model_approved")
-
-# With:
-@trigger_on_finish(flow='EvaluateDetectorFlow')
-```
-
-### Making Promotion Manual-Only
-
-Remove the `@project_trigger` decorator entirely from PromoteFlow.
-
-## Human-in-the-Loop Stages
-
-Two stages require human judgment (not automated by default):
-
-| Stage | Who | Decision |
-|-------|-----|----------|
-| **Promote to Champion** | ML Engineer | "Is this model ready?" (quality/business judgment) |
-| **Challenger Deployment** | Platform/MLOps | "Deploy for A/B testing?" (infrastructure concern) |
-
-These are intentionally separate from flow automation because:
-- Champion promotion is a **business decision** requiring domain context
-- Challenger deployment is an **infrastructure task** (traffic splitting, monitoring)—not a flow
-
-## System Extensions (Quick-Start Notes)
-
-For teams looking to extend this system:
-
-### Approval Queue/Dashboard
-
-**Simplest approach:** Use Slack workflow or a shared spreadsheet.
-
-1. EvaluateFlow's `approval_requested` event triggers a Slack message (via Argo notification)
-2. Message includes: model version, anomaly rate, link to UI
-3. Reviewer clicks "Approve" button → runs a Slack workflow that calls:
-   ```bash
-   curl -X POST your-webhook/approve?version=v5
-   ```
-4. Webhook publishes `model_approved` event
-
-**Why not build a queue?** Events are fire-and-forget. Building state tracking adds complexity. Slack/JIRA already handle approval workflows well.
-
-### Challenger Traffic Splitting
-
-**Simplest approach:** Two deployment configs, manual traffic routing.
-
-1. Create `deployments/api-challenger/` with `model_ref: evaluated`
-2. Deploy both APIs to separate endpoints
-3. Use nginx/envoy/cloud load balancer to split traffic (e.g., 90/10)
-4. Monitor both via existing `/model/info` endpoint
-5. After trial period, promote challenger and remove the deployment
-
-**Why not automate?** Traffic splitting is infrastructure-specific (K8s Istio, AWS ALB, etc.). Keep flows focused on ML logic.
-
-### Rollback Automation
-
-**Simplest approach:** Manual PromoteFlow with previous version.
-
-```bash
-# Rollback to previous champion
-python flows/promote/flow.py run --version v4
-```
-
-For automated rollback on drift detection:
-1. Create `MonitorFlow` that runs hourly, checks model performance
-2. If degraded, publish `rollback_requested` event with `--version` in payload
-3. PromoteFlow listens for this event (add second trigger)
-
-**Why start manual?** Automated rollback requires clear rollback criteria. Start with manual, learn what triggers rollback, then automate.
-
-## Customer Requirements Mapping
-
-| Requirement | Implementation |
-|-------------|----------------|
-| Create model | `models/anomaly_detector/asset_config.toml` |
-| Create version | `prj.register_model()` in TrainFlow |
-| Link to training job | Annotations: `training_run_id`, `training_flow` |
-| Link to training metrics | Annotations: `anomaly_rate`, etc. |
-| Link to training dataset | Annotations: `data_source`, `training_timestamp` |
-| Link to evaluation job | `Evals.log()` or evaluation_results asset |
-| Link to evaluation dataset | Evaluation annotations |
-| **Assign status** | `tags: {status: "candidate/evaluated/champion"}` |
-| Download by alias | `consume_model_asset(instance="champion")` |
-| Request approval | `publish_event("approval_requested")` |
-| Compare metrics | Evals comparison / EvaluateFlow card |
-| Trial period | Deploy as challenger with parallel execution |
-
-## Why Champion, Not Production?
-
-The word "production" conflates two concepts:
-
-1. **ML Quality**: "Is this model good enough?"
-2. **Deployment Environment**: "Where is this code running?"
-
-By using `champion`:
-- It's clear this is an ML quality designation
-- Deployment configs can reference `champion` from any environment
-- No confusion between model status and deploy environment
-- Clean mental model for MLOps professionals
+**CoinGecko API** - Free tier, no API key required, updates every few minutes.

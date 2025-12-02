@@ -1,37 +1,48 @@
 """
 Build training and evaluation datasets from accumulated snapshots.
 
-This flow implements the "fast bakery" pattern:
-1. Lists N recent market snapshot paths from Parquet storage
-2. Splits paths by time (train = older, holdout = recent)
-3. Loads, deduplicates, and writes each dataset in a single step
-4. Registers as DataAssets for downstream consumption
-5. Publishes 'dataset_ready' event to trigger TrainFlow
+This flow implements temporal feature engineering for crash prediction:
+1. Lists recent market snapshot paths from Parquet storage
+2. Loads ALL snapshots (no deduplication - we need temporal history)
+3. Adds lag features and rolling statistics per coin
+4. Splits by TIME (train on past, evaluate on "future")
+5. Registers as DataAssets for downstream consumption
 
-Dataset Split Strategy:
------------------------
-For temporal data, we split by snapshot paths (not loaded data) to prevent
-memory issues with large datasets:
+Dataset Strategy:
+-----------------
+Unlike typical ML where we deduplicate, we KEEP all temporal observations:
 
-    |<------- Training Paths ------->|<-- Holdout Paths -->|
-    |  snapshots 1 to N-holdout_n    |  last holdout_n     |
-    |        (older data)            |   (recent data)     |
+    Snapshot t=1: [BTC, ETH, ...] 100 coins
+    Snapshot t=2: [BTC, ETH, ...] 100 coins
+    ...
+    Snapshot t=24: [BTC, ETH, ...] 100 coins
 
-This ensures:
-- No data leakage (eval uses "future" data)
-- Memory efficient (load/write each split independently)
-- Scalable (never holds full dataset in memory)
+    Total: 24 × 100 = 2,400 rows (not deduplicated!)
+
+Each row gets lag features computed from prior snapshots of the same coin:
+    - price_change_pct_24h_lag_1h (what was this 1 hour ago?)
+    - price_change_pct_24h_lag_6h
+    - price_change_pct_24h_rolling_mean_24h
+
+This enables the model to learn TEMPORAL patterns, not just static anomalies.
+
+Time Split:
+-----------
+    |<------- Training (older) ------->|<-- Holdout (recent) -->|
+
+    Training: Learn patterns from historical data
+    Holdout: Test if model predicts on "future" data it hasn't seen
 
 Triggering:
 - @schedule(daily=True) - runs daily to build fresh datasets
 - Publishes 'dataset_ready' event for TrainFlow
 
 Usage:
-    # Use last 24 snapshots, hold out last 3 for eval
-    python flow.py run --n_snapshots 24 --holdout_snapshots 3
+    # Use last 168 hours (7 days), hold out last 24 hours
+    python flow.py run --max_history_hours 168 --holdout_hours 24
 
-    # Quick test with fewer snapshots
-    python flow.py run --n_snapshots 5 --holdout_snapshots 1
+    # Quick test with less data
+    python flow.py run --max_history_hours 48 --holdout_hours 6
 """
 
 from metaflow import step, card, Parameter, schedule
@@ -47,82 +58,77 @@ class BuildDatasetFlow(ProjectFlow):
     """
     Build training and evaluation datasets from accumulated snapshots.
 
-    Memory-efficient: splits by paths, loads each split independently,
-    never holds full dataset in Metaflow artifacts.
+    Preserves ALL temporal observations and adds lag/rolling features
+    for crash prediction.
     """
 
-    n_snapshots = Parameter(
-        "n_snapshots",
+    max_history_hours = Parameter(
+        "max_history_hours",
+        default=168,  # 7 days
+        type=int,
+        help="Maximum hours of history to include (rolling window)"
+    )
+
+    holdout_hours = Parameter(
+        "holdout_hours",
         default=24,
         type=int,
-        help="Number of recent snapshots to include in dataset"
+        help="Hours of most recent data to hold out for evaluation"
     )
 
-    holdout_snapshots = Parameter(
-        "holdout_snapshots",
-        default=3,
+    min_snapshots_per_coin = Parameter(
+        "min_snapshots_per_coin",
+        default=6,
         type=int,
-        help="Number of most recent snapshots to hold out for evaluation"
+        help="Minimum snapshots needed per coin to compute lag features"
     )
 
-    deduplicate = Parameter(
-        "deduplicate",
-        default=True,
+    add_targets = Parameter(
+        "add_targets",
+        default=False,
         type=bool,
-        help="Deduplicate by coin_id within each snapshot window"
+        help="Add future crash targets (for evaluation/backtesting only)"
     )
 
     @step
     def start(self):
-        """List snapshots and split paths by time."""
+        """Load all snapshots and prepare for temporal processing."""
         from src.storage import SnapshotStore
 
         print(f"Project: {self.prj.project}, Branch: {self.prj.branch}")
-        print(f"\nBuilding dataset from {self.n_snapshots} snapshots")
-        print(f"Holding out {self.holdout_snapshots} for evaluation")
+        print(f"\nBuilding dataset with temporal features")
+        print(f"  Max history: {self.max_history_hours} hours")
+        print(f"  Holdout: {self.holdout_hours} hours")
+        print(f"  Min snapshots per coin: {self.min_snapshots_per_coin}")
 
-        # List available snapshots (newest first)
+        # List all available snapshots
         store = SnapshotStore(self.prj.project, self.prj.branch)
         all_paths = store.list_snapshots()
         print(f"\nFound {len(all_paths)} snapshots in storage")
 
-        if len(all_paths) < self.n_snapshots:
-            print(f"[WARN] Only {len(all_paths)} snapshots available, using all")
-            snapshot_paths = all_paths
-        else:
-            snapshot_paths = all_paths[:self.n_snapshots]
-
-        if len(snapshot_paths) < self.holdout_snapshots + 1:
+        if len(all_paths) < self.min_snapshots_per_coin + 1:
             raise ValueError(
-                f"Need at least {self.holdout_snapshots + 1} snapshots "
-                f"(got {len(snapshot_paths)})"
+                f"Need at least {self.min_snapshots_per_coin + 1} snapshots "
+                f"(got {len(all_paths)}). Run IngestFlow more times first."
             )
 
-        # Split by PATHS, not by loaded data
-        # Paths are sorted newest-first, so holdout = first N paths
-        self.holdout_paths = snapshot_paths[:self.holdout_snapshots]
-        self.train_paths = snapshot_paths[self.holdout_snapshots:]
-
-        print(f"\nPath split:")
-        print(f"  Training: {len(self.train_paths)} snapshots (older)")
-        print(f"  Holdout: {len(self.holdout_paths)} snapshots (recent)")
-
-        for i, p in enumerate(self.train_paths[:2]):
-            print(f"    Train[{i}]: {p.split('/')[-1]}")
-        if len(self.train_paths) > 2:
-            print(f"    ... and {len(self.train_paths) - 2} more")
+        # We'll load ALL snapshots and filter by timestamp later
+        # This is more accurate than filtering by path count
+        self.snapshot_paths = all_paths
+        print(f"Will process {len(self.snapshot_paths)} snapshots")
 
         self.next(self.build_and_write)
 
     @card
     @step
     def build_and_write(self):
-        """Load, deduplicate, and write datasets - single step, no artifacts."""
+        """Load snapshots, add temporal features, split by time, write datasets."""
         from src.storage import SnapshotStore, DatasetStore, get_datastore_root
-        from src.data import FEATURE_COLS
+        from src.features import DatasetConfig, build_ml_dataset, get_feature_columns
         from metaflow import current
         from metaflow.cards import Markdown, Table
-        import pyarrow as pa
+        from datetime import timedelta
+        import pandas as pd
 
         snapshot_store = SnapshotStore(self.prj.project, self.prj.branch)
         dataset_store = DatasetStore(self.prj.project, self.prj.branch)
@@ -130,101 +136,127 @@ class BuildDatasetFlow(ProjectFlow):
         root, provider = get_datastore_root()
         print(f"Storage: {provider} ({root})")
 
-        # --- Process Training Dataset ---
-        print(f"\nProcessing training dataset ({len(self.train_paths)} snapshots)...")
-        train_table = snapshot_store.load_snapshots(self.train_paths)
-        print(f"  Loaded {train_table.num_rows} rows")
+        # --- Load ALL snapshots ---
+        print(f"\nLoading {len(self.snapshot_paths)} snapshots...")
+        raw_table = snapshot_store.load_snapshots(self.snapshot_paths)
+        print(f"  Loaded {raw_table.num_rows} raw rows (NOT deduplicated)")
 
-        if self.deduplicate:
-            train_table = self._deduplicate_table(train_table)
-            print(f"  After dedup: {train_table.num_rows} rows")
+        # --- Configure feature engineering ---
+        config = DatasetConfig(
+            max_history_hours=self.max_history_hours,
+            min_snapshots_per_coin=self.min_snapshots_per_coin,
+            lag_hours=[1, 6, 24],
+            rolling_windows_hours=[6, 24],
+        )
 
-        train_ts = train_table.column('snapshot_timestamp').to_pylist()
-        train_ts_range = (min(train_ts), max(train_ts)) if train_ts else ('', '')
+        # --- Build ML dataset with temporal features ---
+        print(f"\nAdding temporal features...")
+        ml_table, feature_cols = build_ml_dataset(
+            raw_table,
+            config=config,
+            include_targets=self.add_targets,
+        )
+        print(f"  After feature engineering: {ml_table.num_rows} rows")
+        print(f"  Feature columns: {len(feature_cols)}")
+
+        # --- Split by TIME (not by path count) ---
+        df = ml_table.to_pandas()
+        df['snapshot_timestamp'] = pd.to_datetime(df['snapshot_timestamp'])
+
+        max_ts = df['snapshot_timestamp'].max()
+        holdout_cutoff = max_ts - timedelta(hours=self.holdout_hours)
+
+        train_df = df[df['snapshot_timestamp'] < holdout_cutoff]
+        holdout_df = df[df['snapshot_timestamp'] >= holdout_cutoff]
+
+        print(f"\nTime-based split:")
+        print(f"  Training: {len(train_df)} rows (before {holdout_cutoff})")
+        print(f"  Holdout: {len(holdout_df)} rows (after {holdout_cutoff})")
+
+        # --- Write Training Dataset ---
+        import pyarrow as pa
+        train_table = pa.Table.from_pandas(train_df, preserve_index=False)
+        train_ts = train_df['snapshot_timestamp']
+        train_ts_range = (str(train_ts.min()), str(train_ts.max())) if len(train_ts) > 0 else ('', '')
+
+        # Count unique snapshots (not rows)
+        train_snapshot_count = train_df['snapshot_timestamp'].nunique()
 
         self.train_meta = dataset_store.write_dataset(
             name="training_dataset",
             table=train_table,
             version=current.run_id,
             metadata={
-                'snapshot_count': len(self.train_paths),
+                'snapshot_count': train_snapshot_count,
                 'snapshot_range': train_ts_range,
-                'n_features': len(FEATURE_COLS),
-                'feature_names': FEATURE_COLS,
+                'n_features': len(feature_cols),
+                'feature_names': feature_cols,
                 'builder_flow': current.flow_name,
                 'builder_run_id': current.run_id,
+                'temporal_features': True,
+                'deduplicated': False,  # Important: we keep all rows!
             }
         )
         print(f"  Wrote training_dataset: {self.train_meta.total_samples} samples")
 
-        # Free memory before loading holdout
-        del train_table
+        del train_table, train_df
 
-        # --- Process Holdout Dataset ---
-        print(f"\nProcessing holdout dataset ({len(self.holdout_paths)} snapshots)...")
-        holdout_table = snapshot_store.load_snapshots(self.holdout_paths)
-        print(f"  Loaded {holdout_table.num_rows} rows")
-
-        if self.deduplicate:
-            holdout_table = self._deduplicate_table(holdout_table)
-            print(f"  After dedup: {holdout_table.num_rows} rows")
-
-        holdout_ts = holdout_table.column('snapshot_timestamp').to_pylist()
-        holdout_ts_range = (min(holdout_ts), max(holdout_ts)) if holdout_ts else ('', '')
+        # --- Write Holdout Dataset ---
+        holdout_table = pa.Table.from_pandas(holdout_df, preserve_index=False)
+        holdout_ts = holdout_df['snapshot_timestamp']
+        holdout_ts_range = (str(holdout_ts.min()), str(holdout_ts.max())) if len(holdout_ts) > 0 else ('', '')
+        holdout_snapshot_count = holdout_df['snapshot_timestamp'].nunique()
 
         self.holdout_meta = dataset_store.write_dataset(
             name="eval_holdout",
             table=holdout_table,
             version=current.run_id,
             metadata={
-                'snapshot_count': len(self.holdout_paths),
+                'snapshot_count': holdout_snapshot_count,
                 'snapshot_range': holdout_ts_range,
-                'n_features': len(FEATURE_COLS),
-                'feature_names': FEATURE_COLS,
+                'n_features': len(feature_cols),
+                'feature_names': feature_cols,
                 'builder_flow': current.flow_name,
                 'builder_run_id': current.run_id,
+                'temporal_features': True,
+                'deduplicated': False,
             }
         )
         print(f"  Wrote eval_holdout: {self.holdout_meta.total_samples} samples")
 
-        del holdout_table
+        # Store feature cols for downstream
+        self.feature_cols = feature_cols
+
+        del holdout_table, holdout_df
 
         # Build card
-        current.card.append(Markdown("# Dataset Builder"))
+        current.card.append(Markdown("# Dataset Builder (Temporal)"))
         current.card.append(Markdown(f"**Run ID:** {current.run_id}"))
         current.card.append(Markdown(f"**Storage:** {provider}"))
+        current.card.append(Markdown(f"**Temporal Features:** Yes (lag + rolling)"))
 
         current.card.append(Markdown("## Training Dataset"))
         current.card.append(Table([
-            ["Samples", str(self.train_meta.total_samples)],
-            ["Snapshots", str(self.train_meta.snapshot_count)],
-            ["From", self.train_meta.snapshot_range[0][:19] if self.train_meta.snapshot_range[0] else ""],
-            ["To", self.train_meta.snapshot_range[1][:19] if self.train_meta.snapshot_range[1] else ""],
-            ["Features", str(self.train_meta.n_features)],
+            ["Rows (observations)", str(self.train_meta.total_samples)],
+            ["Unique Snapshots", str(self.train_meta.snapshot_count)],
+            ["From", train_ts_range[0][:19] if train_ts_range[0] else ""],
+            ["To", train_ts_range[1][:19] if train_ts_range[1] else ""],
+            ["Features", str(len(feature_cols))],
+            ["Deduplicated", "No (kept all temporal data)"],
         ], headers=["Property", "Value"]))
 
         current.card.append(Markdown("## Evaluation Holdout"))
         current.card.append(Table([
-            ["Samples", str(self.holdout_meta.total_samples)],
-            ["Snapshots", str(self.holdout_meta.snapshot_count)],
-            ["From", self.holdout_meta.snapshot_range[0][:19] if self.holdout_meta.snapshot_range[0] else ""],
-            ["To", self.holdout_meta.snapshot_range[1][:19] if self.holdout_meta.snapshot_range[1] else ""],
+            ["Rows (observations)", str(self.holdout_meta.total_samples)],
+            ["Unique Snapshots", str(self.holdout_meta.snapshot_count)],
+            ["From", holdout_ts_range[0][:19] if holdout_ts_range[0] else ""],
+            ["To", holdout_ts_range[1][:19] if holdout_ts_range[1] else ""],
         ], headers=["Property", "Value"]))
 
+        current.card.append(Markdown("## Feature Columns"))
+        current.card.append(Markdown(f"```\n{chr(10).join(feature_cols[:20])}\n{'...' if len(feature_cols) > 20 else ''}\n```"))
+
         self.next(self.register)
-
-    def _deduplicate_table(self, table):
-        """Deduplicate by coin_id, keeping most recent entry."""
-        import pyarrow as pa
-
-        if table.num_rows == 0:
-            return table
-
-        df = table.to_pandas()
-        df = df.sort_values('snapshot_timestamp', ascending=False)
-        df = df.drop_duplicates(subset=['coin_id'], keep='first')
-
-        return pa.Table.from_pandas(df, preserve_index=False)
 
     @step
     def register(self):
@@ -241,14 +273,15 @@ class BuildDatasetFlow(ProjectFlow):
                 "snapshot_count": self.train_meta.snapshot_count,
                 "snapshot_range_start": self.train_meta.snapshot_range[0],
                 "snapshot_range_end": self.train_meta.snapshot_range[1],
-                "n_features": self.train_meta.n_features,
-                "feature_names": ",".join(self.train_meta.feature_names),
+                "n_features": len(self.feature_cols),
+                "feature_names": ",".join(self.feature_cols[:20]),  # First 20 to avoid overflow
                 "builder_flow": current.flow_name,
                 "builder_run_id": current.run_id,
-                "deduplicated": str(self.deduplicate),
+                "temporal_features": "True",
+                "deduplicated": "False",
             },
-            tags={"dataset_type": "training"},
-            description=f"Training: {self.train_meta.total_samples} samples from {self.train_meta.snapshot_count} snapshots"
+            tags={"dataset_type": "training", "has_temporal_features": "true"},
+            description=f"Training: {self.train_meta.total_samples} rows from {self.train_meta.snapshot_count} snapshots (temporal features)"
         )
 
         # Register holdout dataset
@@ -261,19 +294,22 @@ class BuildDatasetFlow(ProjectFlow):
                 "snapshot_count": self.holdout_meta.snapshot_count,
                 "snapshot_range_start": self.holdout_meta.snapshot_range[0],
                 "snapshot_range_end": self.holdout_meta.snapshot_range[1],
-                "n_features": self.holdout_meta.n_features,
-                "feature_names": ",".join(self.holdout_meta.feature_names),
+                "n_features": len(self.feature_cols),
+                "feature_names": ",".join(self.feature_cols[:20]),
                 "builder_flow": current.flow_name,
                 "builder_run_id": current.run_id,
+                "temporal_features": "True",
+                "deduplicated": "False",
             },
-            tags={"dataset_type": "eval_holdout"},
-            description=f"Holdout: {self.holdout_meta.total_samples} samples from {self.holdout_meta.snapshot_count} snapshots"
+            tags={"dataset_type": "eval_holdout", "has_temporal_features": "true"},
+            description=f"Holdout: {self.holdout_meta.total_samples} rows from {self.holdout_meta.snapshot_count} snapshots (temporal features)"
         )
 
         # Publish event for TrainFlow
         self.prj.safe_publish_event("dataset_ready", payload={
             "training_samples": self.train_meta.total_samples,
             "holdout_samples": self.holdout_meta.total_samples,
+            "n_features": len(self.feature_cols),
             "builder_run_id": current.run_id,
         })
         print("\nPublished 'dataset_ready' event")
@@ -284,15 +320,16 @@ class BuildDatasetFlow(ProjectFlow):
     def end(self):
         """Summary."""
         print(f"\n{'='*50}")
-        print("Dataset Build Complete")
+        print("Dataset Build Complete (Temporal Features)")
         print(f"{'='*50}")
         print(f"\nTraining Dataset:")
-        print(f"  Samples: {self.train_meta.total_samples}")
+        print(f"  Rows: {self.train_meta.total_samples} (NOT deduplicated)")
         print(f"  Snapshots: {self.train_meta.snapshot_count}")
+        print(f"  Features: {len(self.feature_cols)} (includes lag + rolling)")
         tr = self.train_meta.snapshot_range
         print(f"  Range: {tr[0][:19] if tr[0] else 'N/A'} to {tr[1][:19] if tr[1] else 'N/A'}")
         print(f"\nEval Holdout:")
-        print(f"  Samples: {self.holdout_meta.total_samples}")
+        print(f"  Rows: {self.holdout_meta.total_samples}")
         print(f"  Snapshots: {self.holdout_meta.snapshot_count}")
         hr = self.holdout_meta.snapshot_range
         print(f"  Range: {hr[0][:19] if hr[0] else 'N/A'} to {hr[1][:19] if hr[1] else 'N/A'}")

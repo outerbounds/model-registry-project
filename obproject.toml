@@ -22,6 +22,7 @@ perimeter = "default"
 [environments.production.flow_configs]
 model_config = "configs/model.json"
 training_config = "configs/training.json"
+eval_config = "configs/evaluation.json"
 
 # Development environment (all other branches)
 [environments.dev]
@@ -30,3 +31,4 @@ perimeter = "default"
 [environments.dev.flow_configs]
 model_config = "configs/model.json"
 training_config = "configs/training.json"
+eval_config = "configs/evaluation.json"

@@ -4,10 +4,14 @@ Crypto Anomaly Detection Dashboard
 A web dashboard for monitoring the ML pipeline and model registry.
 
 Pages:
-- / (Overview) - Pipeline health, champion model, latest evaluation
+- / (Overview) - Pipeline health, latest model, latest evaluation
 - /data - Data explorer (snapshots, datasets)
-- /models - Model registry (versions, compare, promote)
-- /scanner - Live anomaly scanner
+- /models - Model registry (versions, compare)
+- /cards - Flow cards viewer
+
+Simplified model lifecycle:
+- latest = candidate (just trained, under evaluation)
+- latest-1 = champion (previous version, proven)
 """
 
 from pathlib import Path
@@ -41,23 +45,19 @@ templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
 
 def format_version(version_str):
-    """Format long version strings to a readable short form.
+    """Format long version strings to a truncated form.
 
-    Asset versions in obproject are typically task pathspecs:
-    - Format: v{timestamp}_task_{FlowName}_{run_id}_{step}_{task_id}
-    - Example: v098235478858_task_TrainDetectorFlow_185193_train_12345
-    - Argo format: v{ts}_task_{FlowName}_argo_cryptoanomaly_prod_{wf}_{uuid}
-
-    We extract meaningful identifiers for display.
+    Shows a shortened version for display, with full version available via tooltip.
     """
     if not version_str:
         return "-"
     v = str(version_str)
+
     # If it's a simple version like "v5" or "5", return as-is
-    if len(v) < 20:
+    if len(v) < 25:
         return f"v{v}" if not v.startswith("v") else v
 
-    # For task pathspec format: v{ts}_task_{Flow}_{run}_{step}_{task}
+    # For task pathspec format, extract Flow/run_id
     if "_task_" in v:
         parts = v.split("_")
         try:
@@ -65,40 +65,20 @@ def format_version(version_str):
             flow_name = parts[task_idx + 1] if len(parts) > task_idx + 1 else ""
             run_id = parts[task_idx + 2] if len(parts) > task_idx + 2 else ""
 
-            # Clean up flow name (remove common suffixes for brevity)
-            short_flow = flow_name.replace("DetectorFlow", "").replace("AnomalyFlow", "").replace("MarketDataFlow", "Ingest").replace("DatasetFlow", "Dataset").replace("Flow", "")
-            if not short_flow:
-                short_flow = flow_name[:10]
-
-            # For Argo runs, extract a more useful identifier
+            # For Argo runs, find a unique identifier
             if run_id == "argo":
-                # Argo format: argo_cryptoanomaly_prod_traindetectorflow_xyz123
-                # Find the UUID at the end (last part that looks like a hash)
-                remaining = "_".join(parts[task_idx + 3:])
-                # Try to find a short unique ID - look for UUID-like part or last segment
+                # Look for UUID-like part
                 uuid_parts = [p for p in parts if len(p) >= 8 and "-" in p]
                 if uuid_parts:
-                    # Use first 8 chars of UUID
-                    return f"{short_flow}/{uuid_parts[0][:8]}"
-                # Fallback: use timestamp from version
-                ts = parts[0][1:] if parts[0].startswith("v") else parts[0]
-                if len(ts) >= 12:
-                    # Convert epoch-like timestamp to readable format
-                    return f"{short_flow}/argo-{ts[-6:]}"
-                return f"{short_flow}/argo"
+                    return f"{flow_name[:15]}/{uuid_parts[0][:8]}"
+                return f"{flow_name[:15]}/argo"
             else:
-                return f"{short_flow}/{run_id}"
+                return f"{flow_name[:15]}/{run_id}"
         except (ValueError, IndexError):
             pass
 
-    # Fallback for other formats
-    if "_" in v:
-        parts = v.split("_")
-        if len(parts) >= 4:
-            flow_name = parts[2] if len(parts) > 2 else ""
-            run_id = parts[3] if len(parts) > 3 else ""
-            return f"{flow_name[:12]}.../{run_id}"
-    return v[:16] + "..."
+    # Fallback: just truncate
+    return v[:25] + "..."
 
 
 def format_version_tooltip(version_str):
@@ -179,27 +159,10 @@ def _int(val, default=0):
         return default
 
 
-def find_champion_model(asset: Asset):
-    """Find champion model by checking if latest model has champion status."""
-    try:
-        # Since there's only one version at a time (each registration replaces),
-        # just check if the latest model has champion status
-        from src import registry
-        ref = registry.load_model(asset, "anomaly_detector", instance="latest")
-        if ref.status == registry.ModelStatus.CHAMPION:
-            return {
-                "version": ref.version,
-                "status": ref.status.value,
-                "annotations": ref.annotations,
-                "tags": ref.tags,
-            }
-    except Exception:
-        pass
-    return None
-
-
 def get_pipeline_status(asset: Asset, branch: str):
     """Get pipeline health status for display."""
+    from src import registry
+
     status = {
         "project": PROJECT,
         "branch": branch,
@@ -209,14 +172,12 @@ def get_pipeline_status(asset: Asset, branch: str):
         "overall": "unknown",
     }
 
-    # Check model
+    # Check model (latest = candidate)
     try:
-        from src import registry
         ref = registry.load_model(asset, "anomaly_detector", instance="latest")
         status["model"] = {
             "status": "healthy",
             "version": ref.version,
-            "model_status": ref.status.value,
         }
     except Exception:
         status["model"] = {"status": "no_model"}
@@ -234,12 +195,13 @@ def get_pipeline_status(asset: Asset, branch: str):
     except Exception:
         status["data"] = {"status": "no_data"}
 
-    # Check champion - use tag-based lookup instead of instance="champion"
-    champion = find_champion_model(asset)
-    if champion:
+    # Check champion via Metaflow run tags
+    champion_run_id = get_champion_run_id(branch=branch)
+    if champion_run_id:
         status["champion"] = {
             "status": "available",
-            "version": champion["version"],
+            "version": f"Train/{champion_run_id}",
+            "run_id": champion_run_id,
         }
     else:
         status["champion"] = {"status": "none"}
@@ -256,65 +218,283 @@ def get_pipeline_status(asset: Asset, branch: str):
     return status
 
 
-def get_model_versions(asset: Asset, limit=20):
-    """Get list of model versions."""
-    from src import registry
+def get_model_versions(asset: Asset, branch: str, limit=20):
+    """Get list of model versions from Metaflow training runs.
+
+    Uses Metaflow Client API to fetch run artifacts directly.
+    This provides complete version history with all training metadata.
+
+    Args:
+        asset: Asset client (for fallback)
+        branch: Project branch to filter runs by (e.g., 'test.feature_prediction')
+        limit: Maximum number of versions to return
+    """
+    from metaflow import Flow, namespace
 
     versions = []
-    seen_versions = set()
 
-    # Get versions via latest-N iteration
-    for i in range(limit):
-        try:
-            instance = "latest" if i == 0 else f"latest-{i}"
-            ref = registry.load_model(asset, "anomaly_detector", instance=instance)
+    # Look up champion by alias tag (scoped to this branch)
+    current_champion_run = get_champion_run_id(branch=branch)
 
-            if ref.version not in seen_versions:
-                ann = ref.annotations
+    # Set project namespace to see all runs (dev + argo) for this project,
+    # then filter by project_branch tag to get branch-specific runs
+    namespace(f"project:{PROJECT}")
+
+    # Get version history from Metaflow runs, filtered by project_branch tag
+    try:
+        flow = Flow('TrainDetectorFlow')
+        branch_tag = f"project_branch:{branch}"
+        for i, run in enumerate(flow.runs(branch_tag)):
+            if i >= limit:
+                break
+
+            # Only include successful runs
+            if not run.successful:
+                continue
+
+            run_id = run.id
+
+            # Get run artifacts from the train step
+            try:
+                train_step = run['train']
+                for task in train_step:
+                    # Access artifacts
+                    config = dict(task.data.model_config)
+                    prediction = task.data.prediction
+                    feature_set = task.data.feature_set
+                    data_source = task.data.data_source
+
+                    hp = config.get('hyperparameters', {})
+
+                    versions.append({
+                        "version": f"Train/{run_id}",
+                        "alias": "champion" if str(run_id) == str(current_champion_run) else None,
+                        "algorithm": config.get("algorithm", "isolation_forest"),
+                        "anomaly_rate": _float(prediction.anomaly_rate) if hasattr(prediction, 'anomaly_rate') else None,
+                        "training_samples": _int(feature_set.n_samples) if hasattr(feature_set, 'n_samples') else None,
+                        "silhouette_score": None,  # Computed in evaluate flow
+                        "score_gap": None,
+                        "training_timestamp": run.created_at.isoformat() if run.created_at else None,
+                        "training_run_id": run_id,
+                        "data_source": data_source,
+                        "contamination": _float(hp.get("contamination")),
+                        "n_estimators": _int(hp.get("n_estimators")),
+                    })
+                    break  # Only need first task
+            except Exception as e:
+                print(f"[DEBUG] Failed to get artifacts for run {run_id}: {e}")
+                # Add minimal entry for run without detailed artifacts
                 versions.append({
-                    "version": ref.version,
-                    "status": ref.status.value,
-                    "algorithm": ann.get("algorithm"),
-                    "anomaly_rate": _float(ann.get("anomaly_rate")),
-                    "training_samples": _int(ann.get("training_samples")),
-                    "silhouette_score": _float(ann.get("silhouette_score")) if ann.get("silhouette_score") else None,
-                    "score_gap": _float(ann.get("score_gap")) if ann.get("score_gap") else None,
-                    "training_timestamp": ann.get("training_timestamp"),
+                    "version": f"Train/{run_id}",
+                    "alias": "champion" if str(run_id) == str(current_champion_run) else None,
+                    "algorithm": "isolation_forest",
+                    "anomaly_rate": None,
+                    "training_samples": None,
+                    "silhouette_score": None,
+                    "score_gap": None,
+                    "training_timestamp": run.created_at.isoformat() if run.created_at else None,
+                    "training_run_id": run_id,
+                    "data_source": None,
+                    "contamination": None,
+                    "n_estimators": None,
                 })
-                seen_versions.add(ref.version)
+
+    except Exception as e:
+        print(f"[DEBUG] Failed to get Metaflow runs: {e}")
+        # Fall back to just the latest model from asset
+        try:
+            ref = registry.load_model(asset, "anomaly_detector", version="latest")
+            ann = ref.annotations
+            versions.append({
+                "version": ref.version,
+                "alias": ref.alias,
+                "algorithm": ann.get("algorithm"),
+                "anomaly_rate": _float(ann.get("anomaly_rate")),
+                "training_samples": _int(ann.get("training_samples")),
+                "silhouette_score": _float(ann.get("silhouette_score")) if ann.get("silhouette_score") else None,
+                "score_gap": _float(ann.get("score_gap")) if ann.get("score_gap") else None,
+                "training_timestamp": ann.get("training_timestamp"),
+                "training_run_id": ann.get("training_run_id"),
+                "data_source": ann.get("data_source"),
+            })
         except Exception:
-            break
+            pass
 
     return versions
 
 
 def get_latest_evaluation(asset: Asset):
-    """Get latest evaluation result from model annotations."""
+    """Get latest evaluation result from evaluation_results data asset."""
     try:
-        # Evaluation metrics are stored in model annotations when model is evaluated
-        from src import registry
-        ref = registry.load_model(asset, "anomaly_detector", instance="latest")
-        ann = ref.annotations
+        ref = asset.consume_data_asset("evaluation_results", instance="latest")
+        props = ref.get("data_properties", {})
+        ann = props.get("annotations", {})
 
-        # Check if model has been evaluated (has eval_anomaly_rate annotation)
-        if not ann.get("eval_anomaly_rate"):
-            return None
-
-        # Model was evaluated - determine if it passed based on status
-        status = ref.status.value
-        passed = status in ("evaluated", "champion")
+        passed = ann.get("passed", False)
+        if isinstance(passed, str):
+            passed = passed.lower() == "true"
 
         return {
-            "decision": "approve" if passed else "reject",
-            "candidate_version": ref.version,
+            "passed": passed,
+            "model_name": ann.get("model_name"),
+            "model_version": ann.get("model_version"),
+            "compared_to_version": ann.get("compared_to_version"),
+            "eval_dataset": ann.get("eval_dataset"),
             "anomaly_rate": _float(ann.get("eval_anomaly_rate")),
-            "silhouette_score": _float(ann.get("silhouette_score")) if ann.get("silhouette_score") else 0.0,
-            "score_gap": _float(ann.get("score_gap")) if ann.get("score_gap") else 0.0,
-            "gates_passed": 5 if passed else 0,  # Approximate - actual gate count not stored
-            "gates_failed": 0 if passed else 1,
+            "silhouette_score": _float(ann.get("silhouette_score")),
+            "score_gap": _float(ann.get("score_gap")),
+            "evaluated_by_run_id": ann.get("evaluated_by_run_id"),
         }
     except Exception:
         return None
+
+
+def get_outcome_metrics_for_model(model_version: str):
+    """Get outcome validation metrics for a model from ValidateOutcomesFlow runs.
+
+    These are the ground-truth metrics that answer: "Did this model's predictions
+    actually predict crashes?"
+
+    Returns dict with crash_recall, anomaly_precision, false_alarm_rate, etc.
+    """
+    try:
+        from metaflow import Flow
+
+        flow = Flow('ValidateOutcomesFlow')
+
+        # Search for validation runs that validated this model version
+        for run in flow.runs():
+            if not run.successful:
+                continue
+
+            try:
+                # Check if this run validated the model we're interested in
+                end_step = run['end']
+                for task in end_step:
+                    if not hasattr(task.data, 'metrics') or task.data.metrics is None:
+                        continue
+
+                    metrics = task.data.metrics
+
+                    # Check if this validation included our model version
+                    # (ValidateOutcomesFlow validates predictions from multiple models)
+                    if hasattr(task.data, 'outcomes'):
+                        outcomes = task.data.outcomes
+                        model_versions = set(o.model_version for o in outcomes if hasattr(o, 'model_version'))
+
+                        # Look for matching model version (e.g., "TrainDetectorFlow/186089")
+                        version_match = any(model_version in v or v in model_version for v in model_versions)
+                        if not version_match:
+                            continue
+
+                    return {
+                        "crash_recall": _float(metrics.crash_recall) if hasattr(metrics, 'crash_recall') else None,
+                        "anomaly_precision": _float(metrics.anomaly_precision) if hasattr(metrics, 'anomaly_precision') else None,
+                        "false_alarm_rate": _float(metrics.false_alarm_rate) if hasattr(metrics, 'false_alarm_rate') else None,
+                        "total_predictions": _int(metrics.total_predictions) if hasattr(metrics, 'total_predictions') else None,
+                        "total_crashes": _int(metrics.total_crashes) if hasattr(metrics, 'total_crashes') else None,
+                        "validated_at": run.created_at.isoformat() if run.created_at else None,
+                        "validation_run_id": run.id,
+                    }
+            except Exception:
+                continue
+
+        return None
+    except Exception as e:
+        print(f"[DEBUG] get_outcome_metrics error: {e}")
+        return None
+
+
+def get_model_details(run_id: str, alias: str = None):
+    """Get detailed model info from a training run.
+
+    Args:
+        run_id: The Metaflow run ID (e.g., "186088")
+        alias: Optional alias label for display (e.g., "champion", "candidate")
+
+    Returns dict with:
+    - Model version and hyperparameters
+    - Training data source (resolved version, not alias)
+    - Data snapshot range and count
+    - Outcome validation metrics if available
+    """
+    from metaflow import Flow
+
+    try:
+        flow = Flow('TrainDetectorFlow')
+        run = flow[run_id]
+
+        if not run.successful:
+            return None
+
+        train_step = run['train']
+        for task in train_step:
+            config = dict(task.data.model_config)
+            prediction = task.data.prediction
+            feature_set = task.data.feature_set
+            data_source = task.data.data_source
+
+            hp = config.get('hyperparameters', {})
+
+            details = {
+                "version": f"Train/{run_id}",
+                "alias": alias,
+                "algorithm": config.get("algorithm"),
+                "n_estimators": _int(hp.get("n_estimators")),
+                "contamination": _float(hp.get("contamination")),
+                "anomaly_rate": _float(prediction.anomaly_rate) if hasattr(prediction, 'anomaly_rate') else None,
+                "training_samples": _int(feature_set.n_samples) if hasattr(feature_set, 'n_samples') else None,
+                "training_run_id": run_id,
+                "data_source": data_source,
+                "training_timestamp": run.created_at.isoformat() if run.created_at else None,
+            }
+
+            # Get outcome validation metrics if available
+            outcome_metrics = get_outcome_metrics_for_model(f"TrainDetectorFlow/{run_id}")
+            if outcome_metrics:
+                details["outcome_metrics"] = outcome_metrics
+
+            return details
+
+    except Exception as e:
+        print(f"[DEBUG] get_model_details error for run {run_id}: {e}")
+        return None
+
+
+def get_champion_run_id(branch: str = None) -> str:
+    """Get the training run ID of the current champion model.
+
+    Uses Metaflow's native tagging to find the run tagged 'champion',
+    optionally scoped to a specific project branch.
+
+    Args:
+        branch: Project branch to filter by (e.g., 'test.feature_prediction').
+                If None, returns champion across all branches.
+
+    Returns the run ID string, or None if no champion exists.
+    """
+    from metaflow import Flow, namespace
+
+    try:
+        # Set project namespace to see all runs (dev + argo)
+        namespace(f"project:{PROJECT}")
+        flow = Flow("TrainDetectorFlow")
+
+        # Build tag filter: always require 'champion', optionally filter by branch
+        if branch:
+            # Find champion within this branch
+            branch_tag = f"project_branch:{branch}"
+            for run in flow.runs(branch_tag):
+                if "champion" in run.tags:
+                    return run.id
+        else:
+            # Find champion across all branches
+            for run in flow.runs("champion"):
+                return run.id
+    except Exception:
+        pass
+
+    return None
 
 
 # =============================================================================
@@ -339,25 +519,44 @@ def get_template_context(request: Request, branch: str, **kwargs):
 
 @app.get("/", response_class=HTMLResponse)
 async def overview(request: Request):
-    """Overview page - pipeline health, champion model, latest evaluation."""
+    """Overview page - pipeline health, latest model, latest evaluation."""
     branch = get_branch_from_request(request)
     asset = get_asset_client(branch)
 
     status = get_pipeline_status(asset, branch)
     evaluation = get_latest_evaluation(asset)
 
-    # Get champion details using tag-based lookup
+    # Get champion details via Metaflow run tags (same as Models page)
     champion_details = None
-    champion = find_champion_model(asset)
-    if champion:
-        ann = champion.get("annotations", {})
-        champion_details = {
-            "version": champion["version"],
-            "algorithm": ann.get("algorithm"),
-            "anomaly_rate": _float(ann.get("anomaly_rate")),
-            "training_samples": _int(ann.get("training_samples")),
-            "silhouette_score": _float(ann.get("silhouette_score")),
-        }
+    champion_run_id = get_champion_run_id(branch=branch)
+    if champion_run_id:
+        try:
+            from metaflow import Flow, namespace
+            namespace(f"project:{PROJECT}")
+            flow = Flow("TrainDetectorFlow")
+            run = flow[champion_run_id]
+
+            # Get model details from the train step
+            train_step = run['train']
+            for task in train_step:
+                config = dict(task.data.model_config)
+                prediction = task.data.prediction
+                feature_set = task.data.feature_set
+                hp = config.get('hyperparameters', {})
+
+                champion_details = {
+                    "version": f"Train/{champion_run_id}",
+                    "run_id": champion_run_id,
+                    "algorithm": config.get("algorithm", "isolation_forest"),
+                    "anomaly_rate": _float(prediction.anomaly_rate) if hasattr(prediction, 'anomaly_rate') else None,
+                    "training_samples": _int(feature_set.n_samples) if hasattr(feature_set, 'n_samples') else None,
+                    "silhouette_score": None,  # Computed in evaluate flow, not available here
+                    "n_estimators": _int(hp.get("n_estimators")),
+                    "contamination": _float(hp.get("contamination")),
+                }
+                break
+        except Exception as e:
+            print(f"[DEBUG] Failed to load champion run {champion_run_id}: {e}")
 
     return templates.TemplateResponse("overview.html", get_template_context(
         request, branch,
@@ -394,60 +593,40 @@ async def data_explorer(request: Request):
                 "message": "No data yet",
             })
 
-    # Get snapshots from storage
-    snapshots = []
-    try:
-        from src.storage import SnapshotStore
-        store = SnapshotStore(PROJECT, branch)
-        paths = store.list_snapshots(limit=24)
-        for path in paths:
-            parts = path.split("/")
-            date_part = next((p for p in parts if p.startswith("dt=")), None)
-            hour_part = next((p for p in parts if p.startswith("hour=")), None)
-            snapshots.append({
-                "date": date_part[3:] if date_part else "unknown",
-                "hour": hour_part[5:] if hour_part else "unknown",
-                "filename": parts[-1],
-            })
-    except Exception:
-        pass
-
     return templates.TemplateResponse("data.html", get_template_context(
         request, branch,
         data_assets=data_assets,
-        snapshots=snapshots,
     ))
 
 
 @app.get("/models", response_class=HTMLResponse)
 async def model_registry(request: Request):
-    """Model registry page - versions, compare, promote."""
+    """Model registry page - versions, compare."""
     branch = get_branch_from_request(request)
     asset = get_asset_client(branch)
 
-    # Get versions with error handling
+    # Get versions with error handling (filtered by branch)
     versions = []
     error_message = None
     try:
-        versions = get_model_versions(asset, limit=20)
+        versions = get_model_versions(asset, branch=branch, limit=20)
     except Exception as e:
         error_message = f"Failed to load model versions: {str(e)}"
         print(f"[ERROR] {error_message}")
 
-    # Get champion version using tag-based lookup
-    champion_version = None
-    try:
-        champion = find_champion_model(asset)
-        if champion:
-            champion_version = champion["version"]
-    except Exception as e:
-        print(f"[ERROR] Failed to find champion: {e}")
+    # Get champion details with full lineage (scoped to branch)
+    champion_run_id = get_champion_run_id(branch=branch)
+    champion = get_model_details(champion_run_id, alias="champion") if champion_run_id else None
+
+    # Count champions to validate uniqueness
+    champion_count = sum(1 for v in versions if v.get("alias") == "champion")
 
     return templates.TemplateResponse("models.html", get_template_context(
         request, branch,
         versions=versions,
-        champion_version=champion_version,
         error_message=error_message,
+        champion=champion,
+        champion_count=champion_count,
     ))
 
 
@@ -461,9 +640,9 @@ async def model_registry(request: Request):
 FLOW_NAME_MAP = {
     "train": "TrainDetectorFlow",
     "evaluate": "EvaluateDetectorFlow",
-    "promote": "PromoteDetectorFlow",
     "ingest": "IngestMarketDataFlow",
     "build_dataset": "BuildDatasetFlow",
+    "validate_outcomes": "ValidateOutcomesFlow",
 }
 
 
@@ -507,7 +686,7 @@ def get_card_html(flow_name: str, run_id: str = "latest", step_name: str = None,
             return None
 
         # Find a step with a card (typically 'train', 'evaluate', 'register', etc.)
-        card_steps = ['train', 'evaluate', 'register', 'build_and_write']
+        card_steps = ['train', 'evaluate', 'register', 'build_and_write', 'compute_metrics']
         for step in card_steps:
             try:
                 step_obj = run[step]
@@ -566,7 +745,7 @@ async def card_latest(flow_alias: str):
     Get the card HTML for the latest run of a flow.
 
     Args:
-        flow_alias: Short flow name (train, evaluate, promote, ingest, build_dataset)
+        flow_alias: Short flow name (train, evaluate, ingest, build_dataset, validate_outcomes)
 
     Returns:
         HTML content of the card, or 404 if not found
@@ -588,7 +767,7 @@ async def card_by_run(flow_alias: str, run_id: str):
     Get the card HTML for a specific run of a flow.
 
     Args:
-        flow_alias: Short flow name (train, evaluate, promote, ingest, build_dataset)
+        flow_alias: Short flow name (train, evaluate, ingest, build_dataset)
         run_id: Metaflow run ID
 
     Returns:
@@ -609,26 +788,56 @@ async def card_by_run(flow_alias: str, run_id: str):
 async def cards_page(request: Request):
     """
     Cards overview page - list available cards with iframe previews.
+    Supports both cross-flow comparison (latest of each flow) and
+    intra-flow comparison (multiple runs of same flow).
     """
+    from metaflow import Flow, namespace
+
     branch = get_branch_from_request(request)
 
-    # Get recent runs with cards for each flow
-    cards_info = []
+    # Set project namespace to see all runs (dev + argo) for this project
+    namespace(f"project:{PROJECT}")
+
+    # Get recent runs with cards for each flow, filtered by branch
+    # Collect up to MAX_RUNS_PER_FLOW for intra-flow comparison
+    MAX_RUNS_PER_FLOW = 5
+    cards_info = []  # Latest run per flow (for display cards)
+    flow_runs = {}   # All recent runs per flow (for intra-flow comparison)
+    branch_tag = f"project_branch:{branch}"
+
     for alias, flow_name in FLOW_NAME_MAP.items():
         try:
-            from metaflow import Flow
             flow = Flow(flow_name)
-            run = flow.latest_successful_run
-            if run:
-                # Get detailed card info for this run
-                step_cards = get_flow_cards_info(flow_name, "latest")
+            # Collect recent successful runs for this branch
+            runs_for_flow = []
+            for r in flow.runs(branch_tag):
+                if r.successful:
+                    run_info = {
+                        "run_id": r.id,
+                        "created_at": r.created_at.isoformat() if r.created_at else None,
+                        "url": f"/cards/{alias}/{r.id}?branch={branch}",
+                    }
+                    runs_for_flow.append(run_info)
+                    if len(runs_for_flow) >= MAX_RUNS_PER_FLOW:
+                        break
+
+            if runs_for_flow:
+                # Store all runs for this flow
+                flow_runs[alias] = {
+                    "flow_name": flow_name,
+                    "runs": runs_for_flow,
+                }
+
+                # Use latest run for the display card
+                latest = runs_for_flow[0]
+                step_cards = get_flow_cards_info(flow_name, latest["run_id"])
                 cards_info.append({
                     "alias": alias,
                     "flow_name": flow_name,
-                    "run_id": run.id,
-                    "created_at": run.created_at.isoformat() if run.created_at else None,
-                    "url": f"/cards/{alias}/latest",
-                    "step_cards": step_cards,  # List of {step_name, card_index}
+                    "run_id": latest["run_id"],
+                    "created_at": latest["created_at"],
+                    "url": latest["url"],
+                    "step_cards": step_cards,
                     "card_count": len(step_cards),
                 })
         except Exception as e:
@@ -638,6 +847,7 @@ async def cards_page(request: Request):
     return templates.TemplateResponse("cards.html", get_template_context(
         request, branch,
         cards=cards_info,
+        flow_runs=flow_runs,  # For intra-flow comparison dropdowns
     ))
 
 
@@ -646,55 +856,137 @@ async def cards_page(request: Request):
 # =============================================================================
 
 @app.get("/api/models/compare")
-async def api_compare(request: Request, v1: str, v2: str):
-    """Compare two model versions."""
-    from src import registry
+async def api_compare(request: Request, v1: str, v2: str, branch: str = None):
+    """Compare two model versions using Metaflow run data."""
+    from metaflow import Flow, namespace
+    import numpy as np
 
-    branch = get_branch_from_request(request)
-    asset = get_asset_client(branch)
+    # Set project namespace to see all runs
+    namespace(f"project:{PROJECT}")
 
-    try:
-        ref1 = registry.load_model(asset, "anomaly_detector", instance=v1)
-        ref2 = registry.load_model(asset, "anomaly_detector", instance=v2)
+    def get_version_data(version_str: str) -> dict:
+        """Extract full model data from a version string like 'vTrain/186089'.
 
-        def extract(ref):
-            ann = ref.annotations
-            return {
-                "version": ref.version,
-                "status": ref.status.value,
-                "algorithm": ann.get("algorithm"),
-                "anomaly_rate": _float(ann.get("anomaly_rate")),
-                "silhouette_score": _float(ann.get("silhouette_score")),
-                "score_gap": _float(ann.get("score_gap")),
-                "training_samples": _int(ann.get("training_samples")),
+        Returns all lineage info useful for comparison:
+        - Model hyperparameters
+        - Training data source (resolved version)
+        - Data snapshot range and count
+        - Quality metrics (score gap, anomaly rate)
+        - Outcome validation metrics (if available)
+        """
+        # Parse version string (e.g., "vTrain/186089" -> run_id=186089)
+        v = version_str.lstrip('v')
+        if '/' in v:
+            _, run_id = v.split('/', 1)
+        else:
+            run_id = v
+
+        flow = Flow('TrainDetectorFlow')
+        run = flow[run_id]
+
+        train_step = run['train']
+        for task in train_step:
+            config = dict(task.data.model_config)
+            prediction = task.data.prediction
+            feature_set = task.data.feature_set
+            data_source = task.data.data_source
+
+            hp = config.get('hyperparameters', {})
+
+            # Compute quality metrics from scores
+            scores = prediction.anomaly_scores
+            preds = prediction.predictions
+            normal_scores = scores[preds == 1]
+            anomaly_scores = scores[preds == -1]
+            score_gap = float(normal_scores.mean() - anomaly_scores.mean()) if len(anomaly_scores) > 0 else None
+
+            # Get training timestamp
+            created_at = run.created_at.isoformat() if run.created_at else None
+
+            # Get data timestamp (when the training data was created)
+            data_timestamp = feature_set.timestamp if hasattr(feature_set, 'timestamp') else None
+
+            # Get data snapshot range/count if available (from register step artifacts)
+            data_snapshot_start = None
+            data_snapshot_end = None
+            data_snapshot_count = None
+            try:
+                register_step = run['register']
+                for reg_task in register_step:
+                    if hasattr(reg_task.data, 'data_snapshot_range'):
+                        snapshot_range = reg_task.data.data_snapshot_range
+                        if snapshot_range:
+                            data_snapshot_start = snapshot_range[0]
+                            data_snapshot_end = snapshot_range[1]
+                    if hasattr(reg_task.data, 'data_snapshot_count'):
+                        data_snapshot_count = reg_task.data.data_snapshot_count
+                    break
+            except Exception:
+                pass
+
+            result = {
+                "version": f"Train/{run_id}",
+                "alias": None,
+                "algorithm": config.get("algorithm", "isolation_forest"),
+                "training_run_id": run_id,
+                "data_source": data_source,
+                "data_timestamp": data_timestamp,
+                "data_snapshot_start": data_snapshot_start,
+                "data_snapshot_end": data_snapshot_end,
+                "data_snapshot_count": data_snapshot_count,
+                "training_samples": feature_set.n_samples if hasattr(feature_set, 'n_samples') else None,
+                "anomaly_rate": float(prediction.anomaly_rate) if hasattr(prediction, 'anomaly_rate') else None,
+                "score_gap": score_gap,
+                "score_std": float(scores.std()) if len(scores) > 0 else None,
+                "contamination": float(hp.get("contamination")) if hp.get("contamination") else None,
+                "n_estimators": int(hp.get("n_estimators")) if hp.get("n_estimators") else None,
+                "created_at": created_at,
             }
 
+            # Get outcome validation metrics if available
+            outcome_metrics = get_outcome_metrics_for_model(f"TrainDetectorFlow/{run_id}")
+            if outcome_metrics:
+                result["outcome_metrics"] = outcome_metrics
+
+            return result
+
+        raise ValueError(f"No data found for run {run_id}")
+
+    try:
+        data1 = get_version_data(v1)
+        data2 = get_version_data(v2)
+
         return {
-            "v1": extract(ref1),
-            "v2": extract(ref2),
+            "v1": data1,
+            "v2": data2,
         }
     except Exception as e:
         raise HTTPException(status_code=404, detail=str(e))
 
 
 @app.post("/api/models/promote")
-async def api_promote(request: Request, version: str = Form(...)):
-    """Promote a model version to champion."""
-    from obproject import ProjectEvent
+async def api_promote(request: Request, version: str, alias: str = "champion"):
+    """Promote a model version to an alias (e.g., champion).
 
-    branch = get_branch_from_request(request)
-
-    try:
-        event = ProjectEvent("model_approved", project=PROJECT, branch=branch)
-        event.publish(payload={
-            "model_name": "anomaly_detector",
-            "version": version,
-            "triggered_by": "dashboard",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
-        return {"status": "success", "message": f"Promotion event published for v{version}"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    NOTE: The Outerbounds Asset SDK does not currently support updating tags
+    on existing asset versions. In production, this would trigger the PromoteFlow
+    which re-registers the model with the alias tag set.
+    """
+    # The Asset SDK doesn't support tag updates after registration.
+    # To promote a model, use the PromoteFlow:
+    #   python flows/promote/flow.py run --version=<run_id> --alias=champion
+    run_id = version.split('/')[-1]
+    command = f"python flows/promote/flow.py run --version={run_id} --alias={alias}"
+    return {
+        "success": False,
+        "message": (
+            f"Tag updates not supported via API. "
+            f"To promote Train/{run_id} to {alias}, run:\n\n"
+            f"{command}"
+        ),
+        "action": "run_flow",
+        "command": command,
+    }
 
 
 # =============================================================================

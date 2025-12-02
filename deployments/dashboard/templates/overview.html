@@ -50,10 +50,10 @@
         <div class="stat">
             <div class="stat-value">
                 {% if evaluation %}
-                    {% if evaluation.decision == 'approve' %}
-                        <span class="text-success">Approved</span>
+                    {% if evaluation.passed %}
+                        <span class="text-success">Passed</span>
                     {% else %}
-                        <span class="text-danger">Rejected</span>
+                        <span class="text-danger">Failed</span>
                     {% endif %}
                 {% else %}
                     <span class="text-muted">-</span>
@@ -89,12 +89,14 @@
             </div>
             <div class="metric">
                 <span class="metric-label">Anomaly Rate</span>
-                <span class="metric-value">{{ "%.1f"|format(champion.anomaly_rate * 100) }}%</span>
+                <span class="metric-value">{% if champion.anomaly_rate %}{{ "%.1f"|format(champion.anomaly_rate * 100) }}%{% else %}-{% endif %}</span>
             </div>
+            {% if champion.silhouette_score %}
             <div class="metric">
                 <span class="metric-label">Silhouette Score</span>
                 <span class="metric-value">{{ "%.3f"|format(champion.silhouette_score) }}</span>
             </div>
+            {% endif %}
         {% else %}
             <div class="empty-state">
                 <div class="empty-state-icon">&#x1F3C6;</div>
@@ -109,18 +111,18 @@
         <div class="card-header">
             <div class="card-title">Latest Evaluation</div>
             {% if evaluation %}
-                {% if evaluation.decision == 'approve' %}
-                    <span class="badge badge-success">Approved</span>
+                {% if evaluation.passed %}
+                    <span class="badge badge-success">Passed</span>
                 {% else %}
-                    <span class="badge badge-danger">Rejected</span>
+                    <span class="badge badge-danger">Failed</span>
                 {% endif %}
             {% endif %}
         </div>
 
         {% if evaluation %}
             <div class="metric">
-                <span class="metric-label">Candidate Version</span>
-                <span class="metric-value font-mono" title="{{ evaluation.candidate_version }}">{{ evaluation.candidate_version|format_version }}</span>
+                <span class="metric-label">Model Version</span>
+                <span class="metric-value font-mono" title="{{ evaluation.model_version or '-' }}">{{ (evaluation.model_version or '-')|format_version }}</span>
             </div>
             <div class="metric">
                 <span class="metric-label">Anomaly Rate</span>
@@ -132,16 +134,7 @@
             </div>
             <div class="metric">
                 <span class="metric-label">Score Gap</span>
-                <span class="metric-value">{{ "%.3f"|format(evaluation.score_gap) }}</span>
-            </div>
-            <div class="metric">
-                <span class="metric-label">Quality Gates</span>
-                <span class="metric-value">
-                    <span class="text-success">{{ evaluation.gates_passed }} passed</span>
-                    {% if evaluation.gates_failed > 0 %}
-                        / <span class="text-danger">{{ evaluation.gates_failed }} failed</span>
-                    {% endif %}
-                </span>
+                <span class="metric-value">{{ "%.3f"|format(evaluation.score_gap) if evaluation.score_gap else '-' }}</span>
             </div>
         {% else %}
             <div class="empty-state">
