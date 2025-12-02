@@ -411,17 +411,19 @@ class DatasetStore:
 
         Returns:
             Tuple of (pyarrow.Table, DatasetMetadata)
+            Note: metadata.builder_run_id contains the resolved version when 'latest' is used
         """
         import pyarrow as pa
         import pyarrow.parquet as pq
         from metaflow import S3
 
+        resolved_version = version
         if version == "latest":
-            version = self._get_latest_version(name)
-            if not version:
+            resolved_version = self._get_latest_version(name)
+            if not resolved_version:
                 return None, None
 
-        dataset_path = self._get_dataset_path(name, version)
+        dataset_path = self._get_dataset_path(name, resolved_version)
         meta_path = f"{dataset_path}/_metadata.json"
 
         # Load metadata
