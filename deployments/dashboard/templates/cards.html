@@ -14,14 +14,13 @@
     <div class="card-header">
         <span class="card-title">Compare Cards</span>
     </div>
+    {% if cards %}
     <div class="flex gap-2 items-center" style="flex-wrap: wrap;">
         <div>
             <label for="card-left">Left Card</label>
             <select id="card-left" style="min-width: 200px;">
                 {% for card in cards %}
-                {% for sc in card.step_cards %}
-                <option value="/cards/{{ card.alias }}/latest?step={{ sc.step_name }}">{{ card.flow_name }} / {{ sc.step_name }}</option>
-                {% endfor %}
+                <option value="{{ card.url }}">{{ card.flow_name }} ({{ card.run_id[:20] }}{% if card.run_id|length > 20 %}...{% endif %})</option>
                 {% endfor %}
             </select>
         </div>
@@ -29,9 +28,7 @@
             <label for="card-right">Right Card</label>
             <select id="card-right" style="min-width: 200px;">
                 {% for card in cards %}
-                {% for sc in card.step_cards %}
-                <option value="/cards/{{ card.alias }}/latest?step={{ sc.step_name }}" {% if loop.index == 2 %}selected{% endif %}>{{ card.flow_name }} / {{ sc.step_name }}</option>
-                {% endfor %}
+                <option value="{{ card.url }}" {% if loop.index == 2 %}selected{% endif %}>{{ card.flow_name }} ({{ card.run_id[:20] }}{% if card.run_id|length > 20 %}...{% endif %})</option>
                 {% endfor %}
             </select>
         </div>
@@ -39,6 +36,14 @@
             <button class="btn btn-primary" onclick="showSideBySide()">Compare Side-by-Side</button>
         </div>
     </div>
+    <p class="text-muted mt-2" style="font-size: 0.8rem;">
+        Compare training cards across runs to see how score distributions, anomaly rates, and detected coins change over time.
+    </p>
+    {% else %}
+    <div class="text-muted">
+        No cards available for this branch. Run flows with <code>@card</code> decorator first.
+    </div>
+    {% endif %}
 </div>
 
 {% if cards %}

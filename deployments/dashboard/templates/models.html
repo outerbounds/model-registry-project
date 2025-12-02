@@ -73,8 +73,15 @@
             </div>
             {% else %}
             <div class="text-muted" style="font-size: 0.875rem;">
-                No outcome validation yet.<br>
-                Run <code>ValidateOutcomesFlow</code> to measure real-world performance.
+                <strong>Not yet validated.</strong><br>
+                <span style="font-size: 0.8rem;">
+                    Outcome validation requires:
+                    <ol style="margin: 0.5rem 0 0 1rem; padding: 0;">
+                        <li>Model makes predictions (logged by TrainFlow)</li>
+                        <li>Time passes (24-48h) to observe actual outcomes</li>
+                        <li>Run <code>ValidateOutcomesFlow</code> to compare predictions vs reality</li>
+                    </ol>
+                </span>
             </div>
             {% endif %}
         </div>
@@ -273,15 +280,27 @@ async function compareModels() {
     const v1 = document.getElementById('compare-v1').value;
     const v2 = document.getElementById('compare-v2').value;
     const branch = new URLSearchParams(window.location.search).get('branch') || '{{ branch }}';
+    const btn = event.target;
+    const resultsDiv = document.getElementById('comparison-results');
 
     if (v1 === v2) {
         alert('Please select two different versions to compare');
         return;
     }
 
+    // Show loading state
+    btn.classList.add('loading');
+    btn.disabled = true;
+    resultsDiv.style.display = 'block';
+    resultsDiv.innerHTML = '<div class="loading-overlay"><span class="spinner spinner-lg"></span> Loading comparison...</div>';
+
     try {
         const response = await fetch(`/api/models/compare?v1=${v1}&v2=${v2}&branch=${branch}`);
         const data = await response.json();
+
+        // Remove loading state
+        btn.classList.remove('loading');
+        btn.disabled = false;
 
         if (response.ok) {
             const resultsDiv = document.getElementById('comparison-results');
@@ -355,10 +374,10 @@ async function compareModels() {
                             <td>-</td>
                         </tr>
                         <tr>
-                            <td>Data Snapshot</td>
-                            <td>${formatTime(data.v1.data_timestamp)}</td>
-                            <td>${formatTime(data.v2.data_timestamp)}</td>
-                            <td>${data.v1.data_timestamp === data.v2.data_timestamp ? 'Same data' : 'Different'}</td>
+                            <td>Dataset Version</td>
+                            <td><code style="font-size: 0.75rem;" title="${data.v1.data_source || ''}">${data.v1.data_source ? data.v1.data_source.substring(0, 30) + (data.v1.data_source.length > 30 ? '...' : '') : '-'}</code></td>
+                            <td><code style="font-size: 0.75rem;" title="${data.v2.data_source || ''}">${data.v2.data_source ? data.v2.data_source.substring(0, 30) + (data.v2.data_source.length > 30 ? '...' : '') : '-'}</code></td>
+                            <td>${data.v1.data_source === data.v2.data_source ? 'Same data' : '-'}</td>
                         </tr>
                         ${data.v1.data_snapshot_count || data.v2.data_snapshot_count ? `
                         <tr>
@@ -394,10 +413,12 @@ async function compareModels() {
                 </table>
             `;
         } else {
-            alert('Comparison failed: ' + (data.detail || 'Unknown error'));
+            resultsDiv.innerHTML = `<div class="alert alert-warning">Comparison failed: ${data.detail || 'Unknown error'}</div>`;
         }
     } catch (err) {
-        alert('Error: ' + err.message);
+        btn.classList.remove('loading');
+        btn.disabled = false;
+        resultsDiv.innerHTML = `<div class="alert alert-warning">Error: ${err.message}</div>`;
     }
 }
 

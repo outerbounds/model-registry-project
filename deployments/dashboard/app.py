@@ -772,24 +772,36 @@ async def cards_page(request: Request):
     """
     Cards overview page - list available cards with iframe previews.
     """
+    from metaflow import Flow, namespace
+
     branch = get_branch_from_request(request)
 
-    # Get recent runs with cards for each flow
+    # Set project namespace to see all runs (dev + argo) for this project
+    namespace(f"project:{PROJECT}")
+
+    # Get recent runs with cards for each flow, filtered by branch
     cards_info = []
+    branch_tag = f"project_branch:{branch}"
+
     for alias, flow_name in FLOW_NAME_MAP.items():
         try:
-            from metaflow import Flow
             flow = Flow(flow_name)
-            run = flow.latest_successful_run
+            # Find latest successful run for this branch
+            run = None
+            for r in flow.runs(branch_tag):
+                if r.successful:
+                    run = r
+                    break
+
             if run:
                 # Get detailed card info for this run
-                step_cards = get_flow_cards_info(flow_name, "latest")
+                step_cards = get_flow_cards_info(flow_name, run.id)
                 cards_info.append({
                     "alias": alias,
                     "flow_name": flow_name,
                     "run_id": run.id,
                     "created_at": run.created_at.isoformat() if run.created_at else None,
-                    "url": f"/cards/{alias}/latest",
+                    "url": f"/cards/{alias}/{run.id}?branch={branch}",
                     "step_cards": step_cards,  # List of {step_name, card_index}
                     "card_count": len(step_cards),
                 })
@@ -808,10 +820,13 @@ async def cards_page(request: Request):
 # =============================================================================
 
 @app.get("/api/models/compare")
-async def api_compare(request: Request, v1: str, v2: str):
+async def api_compare(request: Request, v1: str, v2: str, branch: str = None):
     """Compare two model versions using Metaflow run data."""
-    from metaflow import Flow
+    from metaflow import Flow, namespace
     import numpy as np
+
+    # Set project namespace to see all runs
+    namespace(f"project:{PROJECT}")
 
     def get_version_data(version_str: str) -> dict:
         """Extract full model data from a version string like 'vTrain/186089'.
