@@ -65,12 +65,21 @@ python flows/ingest/flow.py run
 Accumulates snapshots into train/eval datasets with time-based splits.
 
 ```bash
-# Default: 168hr history, 24hr holdout
+# Default: 96hr history, 7hr holdout
 python flows/build_dataset/flow.py run
 
 # Quick test (smaller holdout)
 python flows/build_dataset/flow.py run --holdout_hours 1
 ```
+
+**Trigger Form Parameters:**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `holdout_hours` | `7` | Hours of recent data reserved for evaluation holdout |
+| `max_history_hours` | `96` | Maximum history window to include |
+| `min_snapshots_per_coin` | `3` | Minimum snapshots required per coin (filters incomplete data) |
+| `add_targets` | `false` | Add target columns for supervised learning |
 
 ### TrainDetectorFlow
 
@@ -86,19 +95,51 @@ python flows/train/flow.py run --fresh_data
 
 ### EvaluateDetectorFlow
 
-Evaluates the latest model against quality gates.
+Evaluates a model against quality gates using the holdout dataset.
 
 ```bash
+# Default: evaluate latest model on holdout set
 python flows/evaluate/flow.py run
+
+# Use fresh data instead of holdout
+python flows/evaluate/flow.py run --eval_data_source fresh
+
+# Evaluate specific model version
+python flows/evaluate/flow.py run --candidate_version v5
 ```
+
+**Trigger Form Parameters:**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `candidate_version` | `latest` | Model to evaluate. Use `latest`, `latest-N`, or version ID |
+| `compare_to` | `latest-1` | Model to compare against. Use `none` to skip comparison |
+| `eval_data_source` | *(empty)* | Leave empty for `eval_holdout` (from config). Set `fresh` for live data |
+| `eval_data_version` | *(empty)* | Leave empty for `latest` (from config). Set `latest-1` for previous holdout |
+
+Empty fields use defaults from `configs/evaluation.json`. Parameters override config at runtime.
+
+**Version specifiers:** `latest`, `latest-1`, `latest-2`, etc. resolve to actual version IDs at runtime.
 
 ### PromoteModelFlow
 
 Promotes a model to champion using Metaflow run tags.
 
 ```bash
-python flows/promote/flow.py run --run_id <TRAIN_RUN_ID>
+# Promote by training run ID
+python flows/promote/flow.py run --version 186362
+
+# Promote latest model
+python flows/promote/flow.py run --version latest
 ```
+
+**Trigger Form Parameters:**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `version` | *(required)* | Training run ID to promote (e.g., `186362`) or `latest` |
+| `alias` | `champion` | Tag to apply (typically `champion`) |
+| `model_name` | `anomaly_detector` | Model asset name |
 
 ## Model Lifecycle
 
