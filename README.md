@@ -1,4 +1,4 @@
-<img style="display: block; max-width: 100%; height: auto; margin: auto;" alt="system" src="https://github.com/user-attachments/assets/6206ae5a-e33d-4832-9c80-523c75a86da1" />
+<img style="display: block; max-width: 100%; height: auto; margin: auto;" alt="system" src="https://github.com/user-attachments/assets/6b4ed419-bc10-482e-9969-3dcf236f0e37" />
 
 
 An end-to-end ML project demonstrating **model registry patterns** with Outerbounds Projects. Detects anomalies in live cryptocurrency market data from CoinGecko.
