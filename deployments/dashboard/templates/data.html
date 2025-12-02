@@ -144,46 +144,16 @@
     </div>
 </div>
 
-<!-- Raw Snapshots -->
+<!-- Data Lineage Note -->
 <div class="card">
     <div class="card-header">
-        <div class="card-title">Raw Parquet Snapshots</div>
-        <span class="badge badge-info">{{ snapshots|length }} snapshots</span>
+        <div class="card-title">Data Lineage</div>
     </div>
-
-    {% if snapshots %}
-    <div class="table-wrapper">
-    <table style="table-layout: auto;">
-        <thead>
-            <tr>
-                <th style="width: 120px;">Date</th>
-                <th style="width: 80px;">Hour</th>
-                <th>Filename</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for snap in snapshots[:24] %}
-            <tr>
-                <td><span class="font-mono">{{ snap.date }}</span></td>
-                <td><span class="font-mono">{{ snap.hour }}:00</span></td>
-                <td><span class="font-mono text-muted" style="font-size: 0.75rem;">{{ snap.filename }}</span></td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    {% if snapshots|length > 24 %}
-    <div class="text-center text-muted mt-1">
-        Showing 24 of {{ snapshots|length }} snapshots
-    </div>
-    {% endif %}
-    {% else %}
-    <div class="empty-state">
-        <div class="empty-state-icon">&#x1F4C1;</div>
-        <p>No snapshots in storage yet</p>
-        <p class="text-muted mt-1">Run IngestFlow to create snapshots</p>
-    </div>
-    {% endif %}
+    <p class="text-muted" style="font-size: 0.875rem; margin: 0;">
+        Data assets are registered by flows and stored in cloud object storage.
+        Each training run captures the exact dataset version used via the <code>data_source</code> annotation.
+        View the <a href="/models?branch={{ branch }}">Model Registry</a> to see which data version each model was trained on.
+    </p>
 </div>
 
 <!-- Storage Info -->
