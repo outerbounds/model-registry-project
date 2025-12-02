@@ -1,4 +1,6 @@
 {
+  "eval_data_source": "eval_holdout",
+  "eval_data_version": "latest",
   "max_anomaly_rate": 0.20,
   "min_anomaly_rate": 0.02,
   "max_rate_diff": 0.25,

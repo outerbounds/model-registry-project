@@ -1,17 +1,30 @@
 """
-Evaluate anomaly detection model on fresh market data.
+Evaluate anomaly detection model on holdout data.
 
 This flow:
 1. Loads the candidate model (configurable version, default=latest)
 2. Optionally loads a comparison model (e.g., current champion)
-3. Fetches fresh market data for evaluation
+3. Loads evaluation data from eval_holdout asset (default) or fetches fresh
 4. Runs inference and applies quality gates
 5. Registers evaluation results linked to the model version
 
-Model Loading:
-- By default, evaluates "latest" (the candidate)
-- Can specify any version or alias via parameters
-- Comparison model is optional (for first model, or A/B tests)
+Data Sources (via eval_config.eval_data_source):
+- "eval_holdout" (default) - Use the holdout set from BuildDatasetFlow for reproducible evaluation
+- "fresh" - Fetch live data from CoinGecko for testing on truly unseen data
+
+Config vs Parameter Override:
+- eval_config sets defaults at deployment time
+- Parameters can override config values at trigger time
+
+Usage:
+    # Use holdout set (default, reproducible)
+    python flow.py run
+
+    # Override to use fresh data at runtime
+    python flow.py run --eval_data_source fresh
+
+    # Evaluate specific model version
+    python flow.py run --candidate_version v5
 
 Triggering:
 - Auto-triggers when TrainDetectorFlow completes (in Argo)
@@ -29,9 +42,9 @@ import src
 @trigger_on_finish(flow='TrainDetectorFlow')
 class EvaluateDetectorFlow(ProjectFlow):
     """
-    Evaluate anomaly detector on fresh market data.
+    Evaluate anomaly detector on holdout or fresh data.
 
-    Loads models by version or alias - no hardcoded assumptions.
+    Config-driven with parameter overrides for runtime flexibility.
     """
 
     # Centralized configs
@@ -49,6 +62,19 @@ class EvaluateDetectorFlow(ProjectFlow):
         "compare_to",
         default="latest-1",
         help="Version to compare against (e.g., 'latest-1', 'champion', or version ID). Use 'none' to skip comparison."
+    )
+
+    # Data source override - Parameter overrides config at runtime
+    eval_data_source = Parameter(
+        "eval_data_source",
+        default=None,
+        help="Override eval data source: 'eval_holdout' (default) or 'fresh'. If not set, uses eval_config."
+    )
+
+    eval_data_version = Parameter(
+        "eval_data_version",
+        default=None,
+        help="Override eval data version (e.g., 'latest', 'latest-1'). If not set, uses eval_config."
     )
 
     @step
@@ -94,35 +120,75 @@ class EvaluateDetectorFlow(ProjectFlow):
                 print(f"[INFO] No comparison model found ({self.compare_to}): {e}")
                 print("Proceeding without comparison (first model or invalid version)")
 
-        self.next(self.fetch_eval_data)
+        self.next(self.load_eval_data)
 
     @step
-    def fetch_eval_data(self):
-        """Fetch fresh market data for evaluation."""
+    def load_eval_data(self):
+        """Load evaluation data from holdout set or fetch fresh."""
+        # Resolve data source: Parameter override > Config > Default
+        data_source = self.eval_data_source or self.eval_config.get("eval_data_source", "eval_holdout")
+        data_version = self.eval_data_version or self.eval_config.get("eval_data_version", "latest")
+
+        print(f"\nEvaluation data source: {data_source}")
+        print(f"Evaluation data version: {data_version}")
+
+        if data_source == "fresh":
+            self._fetch_fresh_data()
+        else:
+            self._load_holdout_data(data_source, data_version)
+
+        self.next(self.evaluate)
+
+    def _fetch_fresh_data(self):
+        """Fetch fresh data from CoinGecko."""
         from src import data
 
-        # Read num_coins from centralized config
         num_coins = self.training_config.get("num_coins", 100)
 
         print(f"\nFetching fresh data for top {num_coins} coins...")
         snapshot = data.fetch_market_data(num_coins=num_coins)
         self.feature_set = data.extract_features(snapshot)
+        self.eval_data_ref = f"coingecko_live:{self.feature_set.timestamp}"
 
         print(f"Prepared {self.feature_set.n_samples} samples x {self.feature_set.n_features} features")
         print(f"Timestamp: {self.feature_set.timestamp}")
 
-        self.next(self.evaluate)
+    def _load_holdout_data(self, asset_name: str, version: str):
+        """Load holdout dataset from storage."""
+        from src.storage import DatasetStore, table_to_feature_set
+        from src.data import FEATURE_COLS
+
+        print(f"\nLoading holdout dataset: {asset_name} (version: {version})...")
+
+        store = DatasetStore(self.prj.project, self.prj.branch)
+        table, metadata = store.load_dataset(asset_name, version=version)
+
+        if table is None:
+            print(f"[WARN] Holdout dataset {asset_name}:{version} not found, falling back to fresh data")
+            self._fetch_fresh_data()
+            return
+
+        # Convert to FeatureSet
+        self.feature_set = table_to_feature_set(table, FEATURE_COLS)
+
+        # Capture resolved version for lineage
+        resolved_version = metadata.builder_run_id
+        self.eval_data_ref = f"{asset_name}:v{resolved_version}"
+
+        print(f"Loaded {self.feature_set.n_samples} samples from {metadata.snapshot_count} snapshots")
+        print(f"Resolved version: BuildDatasetFlow/{resolved_version}")
+        print(f"Snapshot range: {metadata.snapshot_range[0][:19]} to {metadata.snapshot_range[1][:19]}")
 
     @card
     @step
     def evaluate(self):
-        """Run model on fresh data and apply quality gates."""
+        """Run model on evaluation data and apply quality gates."""
         from src.model import Model, get_anomalies
         from src import eval as evaluation
         from metaflow import current
         from metaflow.cards import Markdown, Table
 
-        print("\nEvaluating candidate on fresh data...")
+        print("\nEvaluating candidate on evaluation data...")
 
         # Recreate model from annotations
         model_config = {
@@ -172,6 +238,7 @@ class EvaluateDetectorFlow(ProjectFlow):
 
         current.card.append(Markdown("# Anomaly Detector Evaluation"))
         current.card.append(Markdown(f"**Candidate:** v{self.candidate.version}"))
+        current.card.append(Markdown(f"**Evaluation Data:** {self.eval_data_ref}"))
         if self.candidate.alias:
             current.card.append(Markdown(f"**Alias:** {self.candidate.alias}"))
         if self.comparison:
@@ -231,6 +298,7 @@ class EvaluateDetectorFlow(ProjectFlow):
             "silhouette_score": self.eval_result.metrics.silhouette_score,
             "score_gap": self.eval_result.metrics.score_gap,
             "eval_timestamp": self.feature_set.timestamp,
+            "eval_data_ref": self.eval_data_ref,
         }
 
         # Register evaluation results linked to this specific model version
@@ -245,7 +313,7 @@ class EvaluateDetectorFlow(ProjectFlow):
                 "score_gap": self.eval_result.metrics.score_gap,
                 "eval_timestamp": self.feature_set.timestamp,
             },
-            eval_dataset=f"coingecko_live:{self.feature_set.timestamp}",
+            eval_dataset=self.eval_data_ref,
             compared_to_version=self.comparison.version if self.comparison else None,
             run_metadata={
                 "evaluated_by_flow": current.flow_name,
@@ -263,6 +331,7 @@ class EvaluateDetectorFlow(ProjectFlow):
                 "compared_to_version": self.comparison.version if self.comparison else None,
                 "anomaly_rate": float(self.prediction.anomaly_rate),
                 "evaluation_run_id": current.run_id,
+                "eval_data_ref": self.eval_data_ref,
             })
             print("Published 'evaluation_passed' event")
         else:
@@ -278,6 +347,7 @@ class EvaluateDetectorFlow(ProjectFlow):
         print("Evaluation Complete")
         print(f"{'='*50}")
         print(f"Model: anomaly_detector v{self.candidate.version}")
+        print(f"Eval data: {self.eval_data_ref}")
         if self.comparison:
             print(f"Compared to: v{self.comparison.version}")
         print(f"Result: {result}")
