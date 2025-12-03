@@ -292,42 +292,6 @@ def run_quality_gates(
     )
 
 
-def compare_models(
-    candidate_result: EvaluationResult,
-    champion_result: Optional[EvaluationResult],
-) -> Dict[str, any]:
-    """
-    Compare candidate evaluation against champion.
-
-    Args:
-        candidate_result: Evaluation result for candidate
-        champion_result: Evaluation result for champion (if exists)
-
-    Returns:
-        Comparison metrics dict
-    """
-    comparison = {
-        "candidate_anomaly_rate": candidate_result.anomaly_rate,
-        "candidate_gates_passed": candidate_result.gates_passed,
-        "candidate_all_passed": candidate_result.all_passed,
-    }
-
-    if champion_result:
-        comparison.update({
-            "champion_anomaly_rate": champion_result.anomaly_rate,
-            "champion_gates_passed": champion_result.gates_passed,
-            "rate_diff_vs_champion": abs(
-                candidate_result.anomaly_rate - champion_result.anomaly_rate
-            ),
-            "candidate_better": (
-                candidate_result.all_passed and
-                candidate_result.anomaly_rate <= champion_result.anomaly_rate
-            ),
-        })
-
-    return comparison
-
-
 def format_gate_summary(result: EvaluationResult) -> str:
     """
     Format gate results for logging/display.

@@ -166,40 +166,21 @@ def _extract_coin_features(coin: Dict) -> Tuple[List[float], Dict]:
 
 def get_feature_stats(feature_set: FeatureSet) -> Dict[str, Dict[str, float]]:
     """
-    Calculate statistics for each feature.
+    Compute statistics for each feature.
+
+    Args:
+        feature_set: FeatureSet from extract_features()
 
     Returns:
-        Dict mapping feature name to {mean, stdev, min, max}
+        Dict mapping feature name to stats (mean, stdev, min, max)
     """
     stats = {}
-    for i, col in enumerate(feature_set.feature_names):
-        vals = [f[i] for f in feature_set.features]
-        stats[col] = {
-            "mean": statistics.mean(vals),
-            "stdev": statistics.stdev(vals) if len(vals) > 1 else 0,
-            "min": min(vals),
-            "max": max(vals),
+    for i, name in enumerate(feature_set.feature_names):
+        values = [row[i] for row in feature_set.features]
+        stats[name] = {
+            "mean": statistics.mean(values) if values else 0.0,
+            "stdev": statistics.stdev(values) if len(values) > 1 else 0.0,
+            "min": min(values) if values else 0.0,
+            "max": max(values) if values else 0.0,
         }
     return stats
-
-
-def get_top_movers(snapshot: MarketSnapshot, n: int = 5) -> List[Dict]:
-    """
-    Get top N coins by absolute 24h price change.
-
-    Returns:
-        List of coin dicts sorted by absolute change
-    """
-    sorted_coins = sorted(
-        snapshot.coins,
-        key=lambda x: abs(x.get("price_change_percentage_24h") or 0),
-        reverse=True
-    )
-    return [
-        {
-            "symbol": c["symbol"].upper(),
-            "name": c["name"],
-            "price_change_24h": c.get("price_change_percentage_24h") or 0,
-        }
-        for c in sorted_coins[:n]
-    ]
