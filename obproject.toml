@@ -3,12 +3,11 @@ project = "crypto_anomaly"
 title = "Crypto Market Anomaly Detection"
 description = "Real-time anomaly detection on live cryptocurrency market data from CoinGecko"
 
-# For local testing: omit [dev-assets] so read and write use the same branch
-# This allows testing the full pipeline locally.
-#
-# For production: uncomment to read from prod while writing to user branch:
-# [dev-assets]
-# branch = "main"
+# For local development: read assets from main branch (production data)
+# while writing new assets to your user branch (isolated experiments).
+# This enables testing downstream flows without waiting for data to accumulate.
+[dev-assets]
+branch = "main"
 
 # Map code branches to environment names
 [branch_to_environment]
