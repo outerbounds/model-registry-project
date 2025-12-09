@@ -16,6 +16,7 @@ Simplified model lifecycle:
 
 from pathlib import Path
 import os
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -24,6 +25,41 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from obproject.assets import Asset
+
+
+# =============================================================================
+# Auth Token Refresh
+# =============================================================================
+
+# Track last config reload time
+_last_config_reload = 0
+_CONFIG_RELOAD_INTERVAL = 1800  # 30 minutes
+
+
+def reload_metaflow_config() -> bool:
+    """
+    Reload Metaflow configuration using outerbounds extension.
+
+    We need this to periodically refresh the token in memory to avoid auth
+    timeouts in long-running dashboard processes.
+    """
+    global _last_config_reload
+    try:
+        from metaflow_extensions.outerbounds import reload_config
+        reload_config()
+        _last_config_reload = time.time()
+        return True
+    except Exception as e:
+        print(f"[WARN] Error reloading Metaflow configuration: {e}")
+        return False
+
+
+def ensure_fresh_config():
+    """Reload config if it's been more than 30 minutes since last reload."""
+    global _last_config_reload
+    if time.time() - _last_config_reload > _CONFIG_RELOAD_INTERVAL:
+        reload_metaflow_config()
+
 
 # =============================================================================
 # App Configuration
@@ -520,6 +556,7 @@ def get_template_context(request: Request, branch: str, **kwargs):
 @app.get("/", response_class=HTMLResponse)
 async def overview(request: Request):
     """Overview page - pipeline health, latest model, latest evaluation."""
+    ensure_fresh_config()  # Refresh auth token if needed
     branch = get_branch_from_request(request)
     asset = get_asset_client(branch)
 
@@ -569,6 +606,7 @@ async def overview(request: Request):
 @app.get("/data", response_class=HTMLResponse)
 async def data_explorer(request: Request):
     """Data explorer page - snapshots and datasets."""
+    ensure_fresh_config()  # Refresh auth token if needed
     branch = get_branch_from_request(request)
     asset = get_asset_client(branch)
 
@@ -602,6 +640,7 @@ async def data_explorer(request: Request):
 @app.get("/models", response_class=HTMLResponse)
 async def model_registry(request: Request):
     """Model registry page - versions, compare."""
+    ensure_fresh_config()  # Refresh auth token if needed
     branch = get_branch_from_request(request)
     asset = get_asset_client(branch)
 
@@ -791,6 +830,7 @@ async def cards_page(request: Request):
     Supports both cross-flow comparison (latest of each flow) and
     intra-flow comparison (multiple runs of same flow).
     """
+    ensure_fresh_config()  # Refresh auth token if needed
     from metaflow import Flow, namespace
 
     branch = get_branch_from_request(request)
@@ -858,6 +898,7 @@ async def cards_page(request: Request):
 @app.get("/api/models/compare")
 async def api_compare(request: Request, v1: str, v2: str, branch: str = None):
     """Compare two model versions using Metaflow run data."""
+    ensure_fresh_config()  # Refresh auth token if needed
     from metaflow import Flow, namespace
     import numpy as np
 
