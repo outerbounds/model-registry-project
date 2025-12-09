@@ -173,6 +173,20 @@ class BuildDatasetFlow(ProjectFlow):
         print(f"  Training: {len(train_df)} rows (before {holdout_cutoff})")
         print(f"  Holdout: {len(holdout_df)} rows (after {holdout_cutoff})")
 
+        # Validate that we have enough training data
+        if len(train_df) == 0:
+            raise ValueError(
+                f"No training data after temporal split! All {len(df)} rows are in holdout period "
+                f"(after {holdout_cutoff}). This typically happens when:\n"
+                f"  1. The branch is new and lacks historical data\n"
+                f"  2. IngestMarketDataFlow hasn't run for at least {self.holdout_hours} hours\n"
+                f"  3. The holdout_hours parameter ({self.holdout_hours}h) is larger than available history\n"
+                f"\nSolution: Wait for more data to accumulate or reduce holdout_hours parameter."
+            )
+
+        if len(train_df) < 100:
+            print(f"\n⚠️  WARNING: Only {len(train_df)} training samples. Model quality may be poor.")
+
         # --- Write Training Dataset ---
         import pyarrow as pa
         train_table = pa.Table.from_pandas(train_df, preserve_index=False)
