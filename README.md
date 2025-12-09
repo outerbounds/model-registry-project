@@ -189,11 +189,47 @@ training_config = "configs/training.json"
 
 ### Local Development
 
-For local testing, read and write use your user branch. For production-like behavior (read from main, write to your branch):
+#### Cross-Branch Data Access
+
+By default, local runs read and write to your user branch. To use production data from `main` while writing to your branch:
 
 ```toml
+# obproject.toml
 [dev-assets]
 branch = "main"
+```
+
+This is essential for **new branches** that lack historical data for training. The `[dev-assets]` config enables:
+- **Read** from `main` (production datasets, snapshots)
+- **Write** to `user.yourname` (isolated experiments)
+
+| Context | Write Branch | Read Branch |
+|---------|--------------|-------------|
+| Deployed (Argo) | Deployment branch | Same as write |
+| Local dev with `[dev-assets]` | User branch | `main` |
+| Local dev without `[dev-assets]` | User branch | Same as write |
+
+#### Inspecting Datasets Across Branches
+
+Use the `inspect_datasets.py` script to check data availability:
+
+```bash
+# Compare all branches
+python scripts/inspect_datasets.py
+
+# Detailed analysis of main branch
+python scripts/inspect_datasets.py --branch main --detailed
+
+# Compare specific branches
+python scripts/inspect_datasets.py --compare main test.feature_prediction
+```
+
+Example output:
+```
+training_dataset:
+  Branch                       Rows  Snapshots  Range
+  main                         6695         67  2025-12-05 to 2025-12-07
+  test.feature_prediction       N/A        N/A  N/A
 ```
 
 ## Deployment

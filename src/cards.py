@@ -14,7 +14,8 @@ Components:
 - gates_summary: Quality gates with visual pass/fail indicators
 - model_comparison_table: Side-by-side candidate vs champion metrics
 - top_anomalies_table: Rich table of detected anomalies
-- historical_metrics_chart: Cross-run metrics trend using Client API
+- price_change_heatmap: Heatmap of price changes across timeframes
+- training_summary_card: Summary markdown for training results
 """
 
 from typing import List, Dict, Optional, Any
@@ -292,108 +293,6 @@ def top_anomalies_table(
         rows,
         headers=["Symbol", "Name", "Price", "24h", "7d", "Score"]
     )
-
-
-def historical_metrics_chart(
-    flow_name: str,
-    metric_name: str = "anomaly_rate",
-    limit: int = 20,
-) -> "VegaChart":
-    """
-    Create a line chart of metrics across recent runs using Metaflow Client API.
-
-    This visualization answers: "How has this metric changed over time?"
-    Useful for detecting drift or model degradation.
-
-    Args:
-        flow_name: Name of the flow to query (e.g., 'EvaluateDetectorFlow')
-        metric_name: Artifact name to plot (e.g., 'anomaly_rate')
-        limit: Maximum number of runs to include
-
-    Returns:
-        VegaChart component with historical trend
-    """
-    from metaflow import Flow
-    from metaflow.cards import VegaChart
-
-    data = []
-
-    try:
-        flow = Flow(flow_name)
-
-        for i, run in enumerate(flow.runs()):
-            if i >= limit:
-                break
-
-            if not run.successful:
-                continue
-
-            # Try to extract the metric from run data
-            try:
-                # Check common step names for the metric
-                for step_name in ['evaluate', 'train', 'end']:
-                    try:
-                        step = run[step_name]
-                        for task in step:
-                            task_data = task.data
-
-                            # Look for the metric in various forms
-                            value = None
-                            if hasattr(task_data, metric_name):
-                                value = getattr(task_data, metric_name)
-                            elif hasattr(task_data, 'prediction') and hasattr(task_data.prediction, metric_name):
-                                value = getattr(task_data.prediction, metric_name)
-                            elif hasattr(task_data, 'eval_result') and hasattr(task_data.eval_result, metric_name):
-                                value = getattr(task_data.eval_result, metric_name)
-
-                            if value is not None:
-                                data.append({
-                                    "run_id": run.id,
-                                    "timestamp": run.created_at.isoformat(),
-                                    "value": float(value)
-                                })
-                                break
-                        if data and data[-1]["run_id"] == run.id:
-                            break
-                    except Exception:
-                        continue
-            except Exception:
-                continue
-
-    except Exception as e:
-        # Return empty chart with error message
-        pass
-
-    # Build chart even if data is empty
-    if not data:
-        data = [{"run_id": "no_data", "timestamp": "2024-01-01", "value": 0}]
-
-    spec = {
-        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-        "title": f"{metric_name.replace('_', ' ').title()} Over Time",
-        "width": 500,
-        "height": 200,
-        "data": {"values": data},
-        "mark": {"type": "line", "point": True},
-        "encoding": {
-            "x": {
-                "field": "timestamp",
-                "type": "temporal",
-                "title": "Run Time"
-            },
-            "y": {
-                "field": "value",
-                "type": "quantitative",
-                "title": metric_name.replace("_", " ").title()
-            },
-            "tooltip": [
-                {"field": "run_id", "title": "Run ID"},
-                {"field": "value", "title": "Value", "format": ".3f"}
-            ]
-        }
-    }
-
-    return VegaChart(spec)
 
 
 def price_change_heatmap(

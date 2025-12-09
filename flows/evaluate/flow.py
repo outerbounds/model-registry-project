@@ -126,8 +126,13 @@ class EvaluateDetectorFlow(ProjectFlow):
     def load_eval_data(self):
         """Load evaluation data from holdout set or fetch fresh."""
         # Resolve data source: Parameter override > Config > Default
-        data_source = self.eval_data_source or self.eval_config.get("eval_data_source", "eval_holdout")
-        data_version = self.eval_data_version or self.eval_config.get("eval_data_version", "latest")
+        # Note: Use explicit None checks because Config.get() may return None
+        # even when key exists in some Metaflow runtime environments
+        config_source = self.eval_config.get("eval_data_source") if self.eval_config else None
+        config_version = self.eval_config.get("eval_data_version") if self.eval_config else None
+
+        data_source = self.eval_data_source or config_source or "eval_holdout"
+        data_version = self.eval_data_version or config_version or "latest"
 
         print(f"\nEvaluation data source: {data_source}")
         print(f"Evaluation data version: {data_version}")
@@ -143,7 +148,7 @@ class EvaluateDetectorFlow(ProjectFlow):
         """Fetch fresh data from CoinGecko."""
         from src import data
 
-        num_coins = self.training_config.get("num_coins", 100)
+        num_coins = (self.training_config.get("num_coins") if self.training_config else None) or 100
 
         print(f"\nFetching fresh data for top {num_coins} coins...")
         snapshot = data.fetch_market_data(num_coins=num_coins)

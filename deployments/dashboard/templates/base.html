@@ -4,55 +4,86 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Dashboard{% endblock %} | Crypto Anomaly Detection</title>
+    <!-- Lottie Player -->
+    <script src="https://unpkg.com/@lottiefiles/dotlottie-wc@0.3.0/dist/dotlottie-wc.js" type="module"></script>
     <style>
         :root {
-            /* Outerbounds Brand Colors */
-            /* Primary - Green */
-            --primary: #4C9878;
-            --primary-light: #88BBA5;
-            --primary-dark: #428A6B;
-            --primary-darker: #37795D;
+            /* ===========================================
+               Outerbounds Design System - Official Colors
+               =========================================== */
+            
+            /* Primary - Green (full scale) */
+            --green-100: #DAE8E2;
+            --green-200: #88BBA5;
+            --green-300: #4C9878;
+            --green-400: #428A68;
+            --green-500: #37795D;
+            
+            /* Semantic aliases */
+            --primary: var(--green-300);
+            --primary-light: var(--green-200);
+            --primary-dark: var(--green-400);
+            --primary-darker: var(--green-500);
+            --success: var(--green-300);
+            --success-light: var(--green-100);
+            
+            /* Yellow */
+            --yellow-100: #FAF1DB;
+            --yellow-200: #F7E281;
+            --yellow-300: #EBD754;
+            --yellow-400: #E4B957;
+            --yellow-500: #D7A530;
+            --yellow-600: #8E6A1A;
+            --warning: var(--yellow-300);
+            --warning-light: var(--yellow-100);
+            --warning-dark: var(--yellow-500);
 
-            /* Semantic Colors */
-            --success: #4C9878;
-            --success-light: #DAE8E2;
-            --warning: #FBD784;
-            --warning-dark: #E4B957;
-            --danger: #E6786C;
-            --danger-light: #FCE5E2;
-            --danger-dark: #E35F50;
+            /* Purple */
+            --purple-100: #F5E9F9;
+            --purple-200: #C7D4F3;
+            --purple-300: #976BAC;
+            --purple-400: #8B53A9;
+            --purple-500: #77439F;
+            --purple: var(--purple-300);
+            --purple-light: var(--purple-100);
+            --purple-dark: var(--purple-400);
+            
+            /* Red */
+            --red-100: #FCE5E2;
+            --red-200: #F5B6AF;
+            --red-300: #E6788C;
+            --red-400: #E35F50;
+            --red-500: #C8493A;
+            --danger: var(--red-300);
+            --danger-light: var(--red-100);
+            --danger-dark: var(--red-400);
 
-            /* Purple accent */
-            --purple: #976BAC;
-            --purple-light: #E7D4F3;
-            --purple-dark: #8E53A9;
+            /* Blue */
+            --blue-100: #DFE9F4;
+            --blue-200: #BDDBF2;
+            --blue-300: #88B7E3;
+            --blue-400: #6799C8;
+            --blue-500: #4A7CA7;
+            --blue: var(--blue-300);
+            --blue-light: var(--blue-100);
+            --blue-dark: var(--blue-400);
 
-            /* Blue accent */
-            --blue: #88B7E3;
-            --blue-light: #DFE9F4;
-            --blue-dark: #6799C8;
-
-            /* Yellow accent */
-            --yellow: #FBD784;
-            --yellow-light: #FAF1DB;
-            --yellow-dark: #D7A530;
-
-            /* Neutrals - Grey */
+            /* Grey */
             --gray-50: #FAF7F4;
-            --gray-100: #EBE8E5;
+            --gray-100: #E8E8E5;
             --gray-200: #B2AFAC;
             --gray-300: #6A6867;
             --gray-600: #6A6867;
             --gray-800: #31302F;
             --gray-900: #31302F;
 
-            /* Sand */
+            /* Sand (layered backgrounds) */
             --sand-100: #FAF7F4;
             --sand-200: #F2EEEA;
             --sand-300: #EEE9E4;
 
             --white: #FFFFFF;
-            --black: #31302F;
+            --black: #313029;
         }
 
         * {
@@ -61,9 +92,11 @@
             box-sizing: border-box;
         }
 
+        /* Typography: Roobert for headings, GT America for body (with system fallbacks) */
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--sand-200);
+            font-family: 'GT America', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 15px;
+            background: var(--sand-100);
             color: var(--black);
             line-height: 1.6;
         }
@@ -74,14 +107,15 @@
             padding: 0 1rem;
         }
 
-        /* Navigation */
+        /* Navigation - Light (Sand) */
         nav {
-            background: var(--black);
-            color: var(--white);
+            background: var(--white);
+            color: var(--black);
             padding: 1rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
+            border-bottom: 1px solid var(--sand-300);
         }
 
         nav .container {
@@ -91,9 +125,9 @@
         }
 
         .nav-brand {
-            font-weight: 600;
-            font-size: 1.25rem;
-            color: var(--primary-light);
+            display: flex;
+            align-items: center;
+            text-decoration: none;
         }
 
         .nav-links {
@@ -102,7 +136,9 @@
         }
 
         .nav-links a {
-            color: var(--gray-200);
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--gray-300);
             text-decoration: none;
             padding: 0.5rem 0;
             border-bottom: 2px solid transparent;
@@ -111,16 +147,16 @@
 
         .nav-links a:hover,
         .nav-links a.active {
-            color: var(--white);
-            border-bottom-color: var(--primary);
+            color: var(--black);
+            border-bottom-color: var(--green-300);
         }
 
         .nav-meta {
             display: flex;
             align-items: center;
             gap: 0.75rem;
-            font-size: 0.875rem;
-            color: var(--gray-200);
+            font-size: 14px;
+            color: var(--gray-300);
         }
 
         .branch-selector {
@@ -131,29 +167,47 @@
         }
 
         .branch-selector input {
-            background: var(--gray-800);
-            color: var(--white);
-            border: 1px solid var(--gray-300);
-            padding: 0.375rem 0.5rem;
-            border-radius: 0.375rem;
-            font-size: 0.875rem;
-            width: 180px;
+            background: var(--sand-100);
+            color: var(--black);
+            border: 1px solid var(--sand-300);
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 14px;
+            width: 200px;
             font-family: ui-monospace, monospace;
         }
 
         .branch-selector input:focus {
             outline: none;
-            border-color: var(--primary);
+            border-color: var(--green-300);
+            box-shadow: 0 0 0 3px rgba(76, 152, 120, 0.15);
         }
 
         .branch-selector input::placeholder {
-            color: var(--gray-300);
+            color: var(--gray-200);
         }
 
         .branch-label {
-            color: var(--gray-200);
-            font-size: 0.75rem;
+            color: var(--gray-300);
+            font-size: 12px;
             text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .branch-go-btn {
+            background: var(--green-300);
+            color: var(--white);
+            border: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .branch-go-btn:hover {
+            background: var(--green-400);
         }
 
         .branch-dropdown {
@@ -161,14 +215,15 @@
             top: 100%;
             left: 0;
             right: 0;
-            background: var(--gray-800);
-            border: 1px solid var(--gray-300);
-            border-radius: 0.375rem;
+            background: var(--white);
+            border: 1px solid var(--sand-300);
+            border-radius: 6px;
             margin-top: 0.25rem;
             max-height: 200px;
             overflow-y: auto;
             z-index: 1000;
             display: none;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
         }
 
         .branch-dropdown.show {
@@ -178,19 +233,20 @@
         .branch-option {
             padding: 0.5rem 0.75rem;
             cursor: pointer;
-            font-size: 0.875rem;
+            font-size: 14px;
             font-family: ui-monospace, monospace;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            color: var(--black);
         }
 
         .branch-option:hover {
-            background: var(--gray-600);
+            background: var(--sand-200);
         }
 
         .branch-option .branch-hint {
-            font-size: 0.7rem;
+            font-size: 11px;
             color: var(--gray-300);
             font-family: inherit;
         }
@@ -633,7 +689,15 @@
 <body>
     <nav>
         <div class="container">
-            <div class="nav-brand">Crypto Anomaly Detection</div>
+            <a href="/" class="nav-brand">
+                <dotlottie-wc 
+                    src="https://docs.outerbounds.com/dancing-logo.lottie" 
+                    autoplay 
+                    loop
+                    speed="0.5"
+                    style="width: 120px; height: 24px;">
+                </dotlottie-wc>
+            </a>
             <div class="nav-links">
                 <a href="/?branch={{ branch }}" class="{% if request.url.path == '/' %}active{% endif %}">Overview</a>
                 <a href="/data?branch={{ branch }}" class="{% if request.url.path == '/data' %}active{% endif %}">Data</a>

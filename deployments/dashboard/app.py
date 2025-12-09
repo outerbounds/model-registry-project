@@ -16,6 +16,7 @@ Simplified model lifecycle:
 
 from pathlib import Path
 import os
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -24,6 +25,41 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from obproject.assets import Asset
+
+
+# =============================================================================
+# Auth Token Refresh
+# =============================================================================
+
+# Track last config reload time
+_last_config_reload = 0
+_CONFIG_RELOAD_INTERVAL = 1800  # 30 minutes
+
+
+def reload_metaflow_config() -> bool:
+    """
+    Reload Metaflow configuration using outerbounds extension.
+
+    We need this to periodically refresh the token in memory to avoid auth
+    timeouts in long-running dashboard processes.
+    """
+    global _last_config_reload
+    try:
+        from metaflow_extensions.outerbounds import reload_config
+        reload_config()
+        _last_config_reload = time.time()
+        return True
+    except Exception as e:
+        print(f"[WARN] Error reloading Metaflow configuration: {e}")
+        return False
+
+
+def ensure_fresh_config():
+    """Reload config if it's been more than 30 minutes since last reload."""
+    global _last_config_reload
+    if time.time() - _last_config_reload > _CONFIG_RELOAD_INTERVAL:
+        reload_metaflow_config()
+
 
 # =============================================================================
 # App Configuration
@@ -520,6 +556,7 @@ def get_template_context(request: Request, branch: str, **kwargs):
 @app.get("/", response_class=HTMLResponse)
 async def overview(request: Request):
     """Overview page - pipeline health, latest model, latest evaluation."""
+    ensure_fresh_config()  # Refresh auth token if needed
     branch = get_branch_from_request(request)
     asset = get_asset_client(branch)
 
@@ -569,6 +606,7 @@ async def overview(request: Request):
 @app.get("/data", response_class=HTMLResponse)
 async def data_explorer(request: Request):
     """Data explorer page - snapshots and datasets."""
+    ensure_fresh_config()  # Refresh auth token if needed
     branch = get_branch_from_request(request)
     asset = get_asset_client(branch)
 
@@ -602,6 +640,7 @@ async def data_explorer(request: Request):
 @app.get("/models", response_class=HTMLResponse)
 async def model_registry(request: Request):
     """Model registry page - versions, compare."""
+    ensure_fresh_config()  # Refresh auth token if needed
     branch = get_branch_from_request(request)
     asset = get_asset_client(branch)
 
@@ -791,6 +830,7 @@ async def cards_page(request: Request):
     Supports both cross-flow comparison (latest of each flow) and
     intra-flow comparison (multiple runs of same flow).
     """
+    ensure_fresh_config()  # Refresh auth token if needed
     from metaflow import Flow, namespace
 
     branch = get_branch_from_request(request)
@@ -858,6 +898,7 @@ async def cards_page(request: Request):
 @app.get("/api/models/compare")
 async def api_compare(request: Request, v1: str, v2: str, branch: str = None):
     """Compare two model versions using Metaflow run data."""
+    ensure_fresh_config()  # Refresh auth token if needed
     from metaflow import Flow, namespace
     import numpy as np
 
@@ -865,14 +906,10 @@ async def api_compare(request: Request, v1: str, v2: str, branch: str = None):
     namespace(f"project:{PROJECT}")
 
     def get_version_data(version_str: str) -> dict:
-        """Extract full model data from a version string like 'vTrain/186089'.
+        """Extract model metadata from a version string like 'vTrain/186089'.
 
-        Returns all lineage info useful for comparison:
-        - Model hyperparameters
-        - Training data source (resolved version)
-        - Data snapshot range and count
-        - Quality metrics (score gap, anomaly rate)
-        - Outcome validation metrics (if available)
+        Optimized to avoid loading large artifacts (prediction arrays, feature matrices).
+        Uses pre-computed metrics from the register step when available.
         """
         # Parse version string (e.g., "vTrain/186089" -> run_id=186089)
         v = version_str.lstrip('v')
@@ -884,73 +921,96 @@ async def api_compare(request: Request, v1: str, v2: str, branch: str = None):
         flow = Flow('TrainDetectorFlow')
         run = flow[run_id]
 
-        train_step = run['train']
-        for task in train_step:
-            config = dict(task.data.model_config)
-            prediction = task.data.prediction
-            feature_set = task.data.feature_set
-            data_source = task.data.data_source
+        # Get training timestamp (lightweight - metadata only)
+        created_at = run.created_at.isoformat() if run.created_at else None
 
-            hp = config.get('hyperparameters', {})
+        # Try register step first - it has pre-computed summary metrics
+        result = {
+            "version": f"Train/{run_id}",
+            "alias": None,
+            "training_run_id": run_id,
+            "created_at": created_at,
+        }
 
-            # Compute quality metrics from scores
-            scores = prediction.anomaly_scores
-            preds = prediction.predictions
-            normal_scores = scores[preds == 1]
-            anomaly_scores = scores[preds == -1]
-            score_gap = float(normal_scores.mean() - anomaly_scores.mean()) if len(anomaly_scores) > 0 else None
+        try:
+            register_step = run['register']
+            for reg_task in register_step:
+                # Get pre-computed metrics from register step (avoids loading large arrays)
+                if hasattr(reg_task.data, 'model_config'):
+                    config = dict(reg_task.data.model_config)
+                    hp = config.get('hyperparameters', {})
+                    result["algorithm"] = config.get("algorithm", "isolation_forest")
+                    result["contamination"] = float(hp.get("contamination")) if hp.get("contamination") else None
+                    result["n_estimators"] = int(hp.get("n_estimators")) if hp.get("n_estimators") else None
 
-            # Get training timestamp
-            created_at = run.created_at.isoformat() if run.created_at else None
+                if hasattr(reg_task.data, 'data_source'):
+                    result["data_source"] = reg_task.data.data_source
 
-            # Get data timestamp (when the training data was created)
-            data_timestamp = feature_set.timestamp if hasattr(feature_set, 'timestamp') else None
+                if hasattr(reg_task.data, 'data_snapshot_range'):
+                    snapshot_range = reg_task.data.data_snapshot_range
+                    if snapshot_range:
+                        result["data_snapshot_start"] = snapshot_range[0]
+                        result["data_snapshot_end"] = snapshot_range[1]
 
-            # Get data snapshot range/count if available (from register step artifacts)
-            data_snapshot_start = None
-            data_snapshot_end = None
-            data_snapshot_count = None
+                if hasattr(reg_task.data, 'data_snapshot_count'):
+                    result["data_snapshot_count"] = reg_task.data.data_snapshot_count
+
+                if hasattr(reg_task.data, 'training_samples'):
+                    result["training_samples"] = reg_task.data.training_samples
+
+                # Check for pre-computed quality metrics
+                if hasattr(reg_task.data, 'anomaly_rate'):
+                    result["anomaly_rate"] = float(reg_task.data.anomaly_rate)
+                if hasattr(reg_task.data, 'score_gap'):
+                    result["score_gap"] = float(reg_task.data.score_gap)
+                if hasattr(reg_task.data, 'score_std'):
+                    result["score_std"] = float(reg_task.data.score_std)
+
+                break
+        except Exception:
+            pass  # Register step may not exist for older runs
+
+        # Only load train step artifacts if we're missing key metrics
+        if "score_gap" not in result or "anomaly_rate" not in result:
             try:
-                register_step = run['register']
-                for reg_task in register_step:
-                    if hasattr(reg_task.data, 'data_snapshot_range'):
-                        snapshot_range = reg_task.data.data_snapshot_range
-                        if snapshot_range:
-                            data_snapshot_start = snapshot_range[0]
-                            data_snapshot_end = snapshot_range[1]
-                    if hasattr(reg_task.data, 'data_snapshot_count'):
-                        data_snapshot_count = reg_task.data.data_snapshot_count
+                train_step = run['train']
+                for task in train_step:
+                    if "algorithm" not in result and hasattr(task.data, 'model_config'):
+                        config = dict(task.data.model_config)
+                        hp = config.get('hyperparameters', {})
+                        result["algorithm"] = config.get("algorithm", "isolation_forest")
+                        result["contamination"] = float(hp.get("contamination")) if hp.get("contamination") else None
+                        result["n_estimators"] = int(hp.get("n_estimators")) if hp.get("n_estimators") else None
+
+                    if hasattr(task.data, 'data_source'):
+                        result["data_source"] = task.data.data_source
+
+                    if hasattr(task.data, 'feature_set'):
+                        feature_set = task.data.feature_set
+                        result["training_samples"] = feature_set.n_samples if hasattr(feature_set, 'n_samples') else None
+                        result["data_timestamp"] = feature_set.timestamp if hasattr(feature_set, 'timestamp') else None
+
+                    # Load prediction data only if needed for metrics
+                    if "score_gap" not in result and hasattr(task.data, 'prediction'):
+                        prediction = task.data.prediction
+                        result["anomaly_rate"] = float(prediction.anomaly_rate) if hasattr(prediction, 'anomaly_rate') else None
+
+                        # Compute score gap from arrays
+                        if hasattr(prediction, 'anomaly_scores') and hasattr(prediction, 'predictions'):
+                            scores = prediction.anomaly_scores
+                            preds = prediction.predictions
+                            normal_scores = scores[preds == 1]
+                            anomaly_scores = scores[preds == -1]
+                            result["score_gap"] = float(normal_scores.mean() - anomaly_scores.mean()) if len(anomaly_scores) > 0 else None
+                            result["score_std"] = float(scores.std()) if len(scores) > 0 else None
                     break
             except Exception:
-                pass
+                pass  # Train step artifacts may be unavailable
 
-            result = {
-                "version": f"Train/{run_id}",
-                "alias": None,
-                "algorithm": config.get("algorithm", "isolation_forest"),
-                "training_run_id": run_id,
-                "data_source": data_source,
-                "data_timestamp": data_timestamp,
-                "data_snapshot_start": data_snapshot_start,
-                "data_snapshot_end": data_snapshot_end,
-                "data_snapshot_count": data_snapshot_count,
-                "training_samples": feature_set.n_samples if hasattr(feature_set, 'n_samples') else None,
-                "anomaly_rate": float(prediction.anomaly_rate) if hasattr(prediction, 'anomaly_rate') else None,
-                "score_gap": score_gap,
-                "score_std": float(scores.std()) if len(scores) > 0 else None,
-                "contamination": float(hp.get("contamination")) if hp.get("contamination") else None,
-                "n_estimators": int(hp.get("n_estimators")) if hp.get("n_estimators") else None,
-                "created_at": created_at,
-            }
+        # Skip outcome metrics lookup - too slow (iterates all ValidateOutcomesFlow runs)
+        # Future: Add caching or run tags for efficient lookup
 
-            # Get outcome validation metrics if available
-            outcome_metrics = get_outcome_metrics_for_model(f"TrainDetectorFlow/{run_id}")
-            if outcome_metrics:
-                result["outcome_metrics"] = outcome_metrics
-
-            return result
-
-        raise ValueError(f"No data found for run {run_id}")
+        return result
 
     try:
         data1 = get_version_data(v1)
