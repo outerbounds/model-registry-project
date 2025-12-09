@@ -144,9 +144,15 @@
 <!-- Modal for side-by-side comparison -->
 <div id="compare-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 1000;">
     <div style="position: relative; margin: 1rem; height: calc(100vh - 2rem); background: white; border-radius: 0.75rem; overflow: hidden;">
-        <div style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; border-bottom: 1px solid var(--sand-300);">
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; border-bottom: 1px solid var(--sand-300); background: var(--sand-100);">
             <span style="font-weight: 600;">Side-by-Side Comparison</span>
-            <button onclick="closeCompareModal()" style="background: none; border: none; font-size: 1.5rem; cursor: pointer;">&times;</button>
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 14px; cursor: pointer; color: var(--gray-300);">
+                    <input type="checkbox" id="lock-y-axes" style="cursor: pointer;">
+                    Lock Y Axes
+                </label>
+                <button onclick="closeCompareModal()" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--gray-300);">&times;</button>
+            </div>
         </div>
         <div style="display: flex; height: calc(100% - 60px);">
             <iframe id="compare-left" style="width: 50%; height: 100%; border: none; border-right: 1px solid var(--sand-300);"></iframe>
